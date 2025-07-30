@@ -67,6 +67,34 @@ static const HardwareID N64_IDS[] =
     {0x0079, 0x0006} // Retrolink N64 USB gamepad
 };
 
+static const HardwareID WIIU_PRO_IDS[] =
+{
+    {0x057E, 0x0330} // Wii U Pro Wireless Controller
+};
+
+static const HardwareID OUYA_IDS[] =
+{
+    {0x2836, 0x0001} // OUYA Controller
+};
+
+static const HardwareID Bit_Ult_IDS[] =
+{
+    {0x057E, 0x2009} // 8Bit Ultimate Bluetooth Controller
+};
+
+static const HardwareID Wii_IDS[] =
+{
+    {0x057e, 0x0306} // Wii Motion Plus Controller
+
+};
+
+static const HardwareID Switch_Joycon_IDS[] =
+{
+    {0x057e, 0x2007} // Switch Joycon (R)
+    {0x057e, 0x2006} // Switch Joycon (L)
+
+};
+
 struct HostTypeMap
 {
     const HardwareID* ids;
@@ -84,6 +112,10 @@ static const HostTypeMap HOST_TYPE_MAP[] =
     { SWITCH_PRO_IDS, sizeof(SWITCH_PRO_IDS) / sizeof(HardwareID), HostDriverType::SWITCH_PRO },
     { PSCLASSIC_IDS, sizeof(PSCLASSIC_IDS) / sizeof(HardwareID), HostDriverType::PSCLASSIC },
     { N64_IDS, sizeof(N64_IDS) / sizeof(HardwareID), HostDriverType::N64 },
+    { WIIU_PRO_IDS, sizeof(WIIU_PRO_IDS) / sizeof(HardwareID), HostDriverType::WIIUPRO },
+    { Bit_Ult_IDS, sizeof(Bit_Ult_IDS) / sizeof(HardwareID), HostDriverType::Bit_Ult },
+    { Wii_IDS, sizeof(Wii_IDS) / sizeof(HardwareID), HostDriverType::Wii },
+    { OUYA_IDS, sizeof(OUYA_IDS) / sizeof(HardwareID), HostDriverType::OUYA },
 };
 
 #endif // _HW_ID_H_
