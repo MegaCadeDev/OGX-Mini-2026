@@ -83,7 +83,7 @@ Please visit [**this page**](https://bluepad32.readthedocs.io/en/latest/supporte
 
 # Features new to this fork:
 Note: These features have been added to the Pico W/ Pico 2 W firmware support, I do not have the other boards to test and implement the same fixes at this time.
-- Wii U Pro controllers are supported fully with working LT and RT
+- Wii U & Switch Pro controllers are supported fully with working LT and RT
 - Wii Remotes are supported along with the following controllers connected: Nunchuck/ GameCube/ Wii Gamepad.
 - Disconnection Combo has been added: Start+Select for most controllers, L3+R3 for OUYA controllers.
 
