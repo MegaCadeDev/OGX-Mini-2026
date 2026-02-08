@@ -63,6 +63,7 @@ set(SOURCES_BOARD
     ${SRC}/USBDevice/DeviceDriver/PSClassic/PSClassic.cpp
     ${SRC}/USBDevice/DeviceDriver/PS3/PS3.cpp
     ${SRC}/USBDevice/DeviceDriver/Switch/Switch.cpp
+    ${SRC}/USBDevice/DeviceDriver/WiiU/WiiU.cpp
     ${SRC}/USBDevice/DeviceDriver/XInput/XInput.cpp
     ${SRC}/USBDevice/DeviceDriver/XboxOG/XboxOG_GP.cpp
     ${SRC}/USBDevice/DeviceDriver/XboxOG/XboxOG_SB.cpp
@@ -325,6 +326,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 
     message(STATUS "UART port: ${UART_PORT}, TX: ${TX_PIN}, RX: ${RX_PIN}")
 
+    pico_enable_stdio_usb(${FW_NAME} 0)
     pico_enable_stdio_uart(${FW_NAME} 1)
     target_compile_definitions(${FW_NAME} PRIVATE
         PICO_DEFAULT_UART=${UART_PORT}

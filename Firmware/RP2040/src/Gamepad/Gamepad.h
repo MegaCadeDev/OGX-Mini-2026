@@ -21,8 +21,8 @@
 class Gamepad 
 {
 public:
+    
     //Defaults used by device to get buttons
-
     static constexpr uint8_t DPAD_UP         = 0x01;
     static constexpr uint8_t DPAD_DOWN       = 0x02;
     static constexpr uint8_t DPAD_LEFT       = 0x04;

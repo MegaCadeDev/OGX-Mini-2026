@@ -18,6 +18,7 @@ namespace ButtonCombo {
     static constexpr uint32_t DINPUT    = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_RB, Gamepad::DPAD_LEFT);
     static constexpr uint32_t XINPUT    = BUTTON_COMBO(Gamepad::BUTTON_START, Gamepad::DPAD_UP);
     static constexpr uint32_t SWITCH    = BUTTON_COMBO(Gamepad::BUTTON_START, Gamepad::DPAD_DOWN);
+    static constexpr uint32_t WIIU      = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_LB, Gamepad::DPAD_DOWN);
     static constexpr uint32_t XBOXOG    = BUTTON_COMBO(Gamepad::BUTTON_START, Gamepad::DPAD_RIGHT);
     static constexpr uint32_t XBOXOG_SB = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_RB, Gamepad::DPAD_RIGHT);
     static constexpr uint32_t XBOXOG_XR = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_LB, Gamepad::DPAD_RIGHT);
@@ -32,6 +33,7 @@ static constexpr DeviceDriverType VALID_DRIVER_TYPES[] = {
     DeviceDriverType::XINPUT,
     DeviceDriverType::PS3,
     DeviceDriverType::PSCLASSIC, 
+    DeviceDriverType::WIIU,
     DeviceDriverType::WEBAPP,
     #if defined(XREMOTE_ROM_AVAILABLE)
     DeviceDriverType::XBOXOG_XR,
@@ -40,6 +42,7 @@ static constexpr DeviceDriverType VALID_DRIVER_TYPES[] = {
 #elif MAX_GAMEPADS > 1
     DeviceDriverType::DINPUT, 
     DeviceDriverType::SWITCH, 
+    DeviceDriverType::WIIU,
     DeviceDriverType::WEBAPP,
 
 #else // MAX_GAMEPADS == 1
@@ -47,6 +50,7 @@ static constexpr DeviceDriverType VALID_DRIVER_TYPES[] = {
     DeviceDriverType::XBOXOG_SB, 
     DeviceDriverType::DINPUT, 
     DeviceDriverType::SWITCH, 
+    DeviceDriverType::WIIU,
     DeviceDriverType::WEBAPP,
     DeviceDriverType::PS3,
     DeviceDriverType::PSCLASSIC, 
@@ -63,13 +67,14 @@ struct ComboMap {
     DeviceDriverType driver; 
 };
 
-static constexpr std::array<ComboMap, 9> BUTTON_COMBO_MAP = {{
+static constexpr std::array<ComboMap, 10> BUTTON_COMBO_MAP = {{
     { ButtonCombo::XBOXOG,    DeviceDriverType::XBOXOG    },
     { ButtonCombo::XBOXOG_SB, DeviceDriverType::XBOXOG_SB },
     { ButtonCombo::XBOXOG_XR, DeviceDriverType::XBOXOG_XR },
     { ButtonCombo::WEBAPP,    DeviceDriverType::WEBAPP    },
     { ButtonCombo::DINPUT,    DeviceDriverType::DINPUT    },
     { ButtonCombo::SWITCH,    DeviceDriverType::SWITCH    },
+    { ButtonCombo::WIIU,      DeviceDriverType::WIIU      },
     { ButtonCombo::XINPUT,    DeviceDriverType::XINPUT    },
     { ButtonCombo::PS3,       DeviceDriverType::PS3       },
     { ButtonCombo::PSCLASSIC, DeviceDriverType::PSCLASSIC }

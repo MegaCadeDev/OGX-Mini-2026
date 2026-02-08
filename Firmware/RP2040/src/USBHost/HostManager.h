@@ -70,48 +70,63 @@ public:
 		Device& device_slot = device_slots_[dev_idx];
 		Interface& interface = device_slot.interfaces[instance];
 
+		debug_printf("Attempting to allocate driver for index %d\n", gp_idx);
+
 		switch (driver_type)
 		{
 			case HostDriverType::PS5:
+				debug_printf("PS5 Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<PS5Host>(gp_idx);
 				break;
 			case HostDriverType::PS4:
+				debug_printf("PS4 Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<PS4Host>(gp_idx);
 				break;
 			case HostDriverType::PS3:
+				debug_printf("PS3 Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<PS3Host>(gp_idx);
 				break;
 			case HostDriverType::DINPUT:
+				debug_printf("DINPUT Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<DInputHost>(gp_idx);
 				break;
 			case HostDriverType::SWITCH:
+				debug_printf("SWITCH Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<SwitchWiredHost>(gp_idx);
 				break;
 			case HostDriverType::SWITCH_PRO:
+				debug_printf("SWITCH PRO Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<SwitchProHost>(gp_idx);
 				break;
 			case HostDriverType::N64:
+				debug_printf("N64 Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<N64Host>(gp_idx);
 				break;
 			case HostDriverType::PSCLASSIC:
+				debug_printf("PSCLASSIC Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<PSClassicHost>(gp_idx);
 				break;
 			case HostDriverType::XBOXOG:
+				debug_printf("XBOXOG Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<XboxOGHost>(gp_idx);
 				break;
 			case HostDriverType::XBOXONE:
+				debug_printf("XBOXONE Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<XboxOneHost>(gp_idx);
 				break;
 			case HostDriverType::XBOX360:
+				debug_printf("XBOX360 Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<Xbox360Host>(gp_idx);
 				break;
 			case HostDriverType::XBOX360W: //Composite device, takes up all 4 gamepads when mounted
+				debug_printf("XBOX360W Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<Xbox360WHost>(gp_idx);
 				break;
 			default:
 				if (is_hid_gamepad(report_desc, desc_len))
 				{
 					interface.driver = std::make_unique<HIDHost>(gp_idx);
+					debug_printf("HIDHOST Loaded\n"); fflush(stdout);
 				}
 				else
 				{

@@ -72,10 +72,10 @@ void SwitchDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_R3)       in_report.buttons |= SwitchWired::Buttons::R3;
         if (gp_in.buttons & Gamepad::BUTTON_SYS)      in_report.buttons |= SwitchWired::Buttons::HOME;
         if (gp_in.buttons & Gamepad::BUTTON_MISC)     in_report.buttons |= SwitchWired::Buttons::CAPTURE;
-
+            
         if (gp_in.trigger_l) in_report.buttons |= SwitchWired::Buttons::ZL;
         if (gp_in.trigger_r) in_report.buttons |= SwitchWired::Buttons::ZR;
-
+        
         in_report.joystick_lx = Scale::int16_to_uint8(gp_in.joystick_lx);
         in_report.joystick_ly = Scale::int16_to_uint8(gp_in.joystick_ly);
         in_report.joystick_rx = Scale::int16_to_uint8(gp_in.joystick_rx);

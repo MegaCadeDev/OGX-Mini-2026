@@ -20,7 +20,8 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
 void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize) 
 {
 	DeviceManager::get_instance().get_driver()->set_report_cb(itf, report_id, report_type, buffer, bufsize);
-	tud_hid_report(report_id, buffer, bufsize);
+	// Do not echo received output back as input report (e.g. Wii U GC adapter init 0x13 must only be received;
+	// TinyUSB re-arms the OUT endpoint after this returns so the host can keep sending 0x13).
 }
 
 bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request) 

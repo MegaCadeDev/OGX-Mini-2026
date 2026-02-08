@@ -14,6 +14,7 @@ enum class DeviceDriverType : uint8_t
     DINPUT,
     PSCLASSIC,
     SWITCH,
+    WIIU,
     WEBAPP = 100,
     UART_BRIDGE
 };
