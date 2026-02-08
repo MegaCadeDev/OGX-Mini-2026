@@ -155,7 +155,7 @@ You can also set ```MAX_GAMEPADS``` which, if greater than one, will only suppor
 
 You'll need git, python3, CMake, Ninja and the GCC ARM toolchain installed. CMake scripts will patch some files in Bluepad32 and BTStack and also make sure all git submodules (plus their submodules and dependencies) are downloaded. Here's an example on Windows:
 ```
-git clone --recursive https://github.com/MegaCadeDev/OGX-Mini.git
+git clone --recursive https://github.com/MegaCadeDev/OGX-Mini-2026.git
 cd OGX-Mini/Firmware/RP2040
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOGXM_BOARD=PI_PICOW -DMAX_GAMEPADS=1
 cmake --build build
