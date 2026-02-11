@@ -17,13 +17,30 @@
     #define MAX_GAMEPADS 1
 #endif
 
-#if defined(CONFIG_OGXM_BOARD_PI_PICO) || defined(CONFIG_OGXM_BOARD_PI_PICO2)
+#if defined(CONFIG_OGXM_BOARD_PI_PICO)
     #define OGXM_BOARD          PI_PICO
     #define PIO_USB_DP_PIN      0 // DM = 1
     #define LED_INDICATOR_PIN   25
 
-#elif defined(CONFIG_OGXM_BOARD_PI_PICOW) || defined(CONFIG_OGXM_BOARD_PI_PICO2W)
+#elif defined(CONFIG_OGXM_BOARD_PI_PICO2)
+    #define OGXM_BOARD          PI_PICO
+    // Reserve GP0/GP1 for UART on Pico 2 by default.
+    #ifndef OGXM_PIO_USB_DP_PIN
+        #define OGXM_PIO_USB_DP_PIN 2
+    #endif
+    #define PIO_USB_DP_PIN      OGXM_PIO_USB_DP_PIN // DM = DP + 1
+    #define LED_INDICATOR_PIN   25
+
+#elif defined(CONFIG_OGXM_BOARD_PI_PICOW)
     #define OGXM_BOARD          PI_PICOW
+
+#elif defined(CONFIG_OGXM_BOARD_PI_PICO2W)
+    #define OGXM_BOARD          PI_PICOW
+    // If USB host is enabled for Pico 2 W, keep GP0/GP1 free for UART.
+    #ifndef OGXM_PIO_USB_DP_PIN
+        #define OGXM_PIO_USB_DP_PIN 2
+    #endif
+    #define PIO_USB_DP_PIN      OGXM_PIO_USB_DP_PIN // DM = DP + 1
 
 #elif defined(CONFIG_OGXM_BOARD_RP2040_ZERO)
     #define OGXM_BOARD          RP2040_ZERO

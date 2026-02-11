@@ -5,6 +5,18 @@
 The Pico 2 will likely require 4.7k resistors between the USB data lines and ground to work correctly.
 ![OGX-Mini](../images/DiagramPico2.png)
 
+## Pico 2 W USB-A host pinout (UART-safe)
+To keep UART on GP0/GP1 available, wire the USB-A female host port to:
+- D+ -> GP2
+- D- -> GP3
+- GND -> GND
+- VBUS -> VSYS (prototype wiring) or a dedicated 5V host switch (recommended)
+
+Recommended signal conditioning:
+- 4.7k pull-down from D+ to GND
+- 4.7k pull-down from D- to GND
+- Optional: 27 ohm series resistor on D+ and D-
+
 # Pi Pico + ESP32
 This is the minumum amount of connections you'll want for this to work and the diagram assumes you're powering the Pico and ESP32 each separately via USB (do not connect power between the 2 boards if so). A more complex configuration is possible, making the Pi Pico able to program the ESP32, but I'll update the repo with that diagram later.
 ![OGX-Mini](../images/DiagramPicoESP32.png)
