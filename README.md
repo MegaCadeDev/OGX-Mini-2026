@@ -9,7 +9,7 @@ Firmware for the RP2040, capable of emulating gamepads for several game consoles
 - Original Xbox
 - Playstation 3
 - Nintendo Switch 1 & 2 (docked)
-- XInput (UsbdSecPatch no longer required, works without it)
+- XInput (Xbox 360, UsbdSecPatch no longer required)
 - Playstation Classic
 - DInput
 - Wii U (GameCube Adapter)
@@ -19,7 +19,7 @@ By default the OGX-Mini will emulate an OG Xbox controller, you must hold a butt
 
 Start = Plus (Switch) = Options (Dualsense/DS4)
 
-- XInput
+- XInput (Xbox 360)
     - Start + Dpad Up 
 - Original Xbox
     - Start + Dpad Right
@@ -87,6 +87,14 @@ Please visit [**this page**](https://bluepad32.readthedocs.io/en/latest/supporte
 
 # Features new to this fork:
 Note: These features have been added to the Pico W/ Pico 2 W firmware support, I do not have the other boards to test and implement the same fixes at this time.
+
+==== Version 1.0.0.4a ===
+- Xbox 360 no longer requires the USB patch to authenticate, uses the same authentication as Joypad-OS to do official handshake with Retail consoles. Homebrew/ Jailbreaking is no longer required to use the XINPUT mode on 360 but it will no longer output to PC.
+- Improved latency on Xbox 360 and PS3 controllers.
+- Added build flags so you can make it only output in a specific mode and disable mode switching.
+- Using a PS5 controller allows you to tap the touchpad to enable or disable the adaptive triggers.
+ 
+=== Version 1.0.0.3a patched ===
 - Ability to emulate the GameCube controller adapter for Wii U. (Also tested on Switch 1/ 2)
 - Wii U & Switch Pro controllers are supported fully with working LT and RT
 - Wii Remotes are supported along with the following controllers connected: Nunchuck/ GameCube/ Wii Gamepad.
@@ -175,4 +183,15 @@ When you build with ESP-IDF, Cmake will run a python script that copies the nece
 
 
 # Credit to the original creator [https://wiredopposite.github.io/](https://github.com/wiredopposite/OGX-Mini/tree/master) for the original base of the project!
+
+## Other projects that have helped enhance this fork
+
+- **[Joypad OS](https://github.com/joypad-ai/joypad-os)** — Reference for Xbox 360 (XSM3) authentication with retail consoles; XInput mode on 360 follows the same approach.
+- **[Bluepad32](https://github.com/ricardoquesada/bluepad32)** — Bluetooth controller support (Pico W / Pico 2 W).
+- **[GP2040-CE](https://github.com/OpenStickCommunity/GP2040-CE)** — USB device output modes (credited in the root LICENSE).
+
+## Licenses and third-party code
+
+- **Xbox 360 console authentication:** XInput builds that work on retail Xbox 360 consoles use [libxsm3](https://github.com/InvoxiPlayGames/libxsm3) (Xbox Security Method 3). libxsm3 is licensed under the GNU Lesser General Public License v2.1 or later; see `Firmware/external/libxsm3/LICENSE.txt`. libxsm3 credits oct0xor, emoose (ExCrypt), and sanjay900; see `Firmware/external/libxsm3/README.md`.
+- **Other dependencies:** See the root `LICENSE` file and the `Firmware/external` directory for Bluepad32, BTStack, TinyUSB, Pico SDK, and other third-party licenses.
 
