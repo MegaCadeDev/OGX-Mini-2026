@@ -509,12 +509,18 @@ bool set_rumble(uint8_t dev_addr, uint8_t instance, uint8_t rumble_l, uint8_t ru
     switch (interface->dev_type)
     {
         case DevType::XBOX360W:
+            send_report(dev_addr, instance, Xbox360W::RUMBLE_ENABLE, sizeof(Xbox360W::RUMBLE_ENABLE));
+            wait_for_tx_complete(dev_addr, interface->ep_out);
+
             std::memcpy(buffer, Xbox360W::RUMBLE, sizeof(Xbox360W::RUMBLE));
             buffer[5] = rumble_l;
             buffer[6] = rumble_r;
             len = sizeof(Xbox360W::RUMBLE);
             break;
         case DevType::XBOX360:
+            send_report(dev_addr, instance, Xbox360::RUMBLE, sizeof(Xbox360::RUMBLE));
+            wait_for_tx_complete(dev_addr, interface->ep_out);
+
             std::memcpy(buffer, Xbox360::RUMBLE, sizeof(Xbox360::RUMBLE));
             buffer[3] = rumble_l;
             buffer[4] = rumble_r;

@@ -5,6 +5,7 @@
 #include "USBDevice/DeviceDriver/XInput/XInput.h"   
 #include "USBDevice/DeviceDriver/Switch/Switch.h"
 #include "USBDevice/DeviceDriver/WiiU/WiiU.h"
+#include "USBDevice/DeviceDriver/Wii/Wii.h"
 #include "USBDevice/DeviceDriver/DInput/DInput.h"
 #include "USBDevice/DeviceDriver/PS3/PS3.h"
 #include "USBDevice/DeviceDriver/XboxOG/XboxOG_GP.h"
@@ -46,6 +47,10 @@ void DeviceManager::initialize_driver(  DeviceDriverType driver_type,
         case DeviceDriverType::WIIU:
             printf("WIIU Loaded\n"); 
             device_driver_ = std::make_unique<WiiUDevice>();
+            break;
+        case DeviceDriverType::WII:
+            printf("WII Loaded\n");
+            device_driver_ = std::make_unique<WiiDevice>();
             break;
         case DeviceDriverType::XINPUT:
             printf("XINPUT Loaded\n"); 

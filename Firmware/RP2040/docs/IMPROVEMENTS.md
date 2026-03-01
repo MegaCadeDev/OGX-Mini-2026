@@ -31,7 +31,7 @@ Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 4. **Control handling**
    - Vendor and class control requests are forwarded to the active driver so XSM3 traffic reaches the XInput handler.
 
-See [XInput_joypad-os_comparison.md](XInput_joypad-os_comparison.md) for a detailed comparison.
+Descriptors and XSM3 flow are aligned with [joypad-os](https://github.com/joypad-ai/joypad-os); a local comparison doc may be kept out of the repo for reference.
 
 ---
 

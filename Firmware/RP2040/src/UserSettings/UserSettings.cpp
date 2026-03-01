@@ -1,4 +1,5 @@
 #include <cstring>
+#include <string>
 #include <array>
 #include <memory>
 #include <pico/multicore.h>
@@ -24,6 +25,7 @@ namespace ButtonCombo {
     static constexpr uint32_t XBOXOG_XR = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_LB, Gamepad::DPAD_RIGHT);
     static constexpr uint32_t PSCLASSIC = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_A);
     static constexpr uint32_t WEBAPP    = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_LB | Gamepad::BUTTON_RB);
+    // WII is build-option only (OGXM_FIXED_DRIVER=WII), not in combo map
 };
 
 static constexpr DeviceDriverType VALID_DRIVER_TYPES[] = {
@@ -34,6 +36,7 @@ static constexpr DeviceDriverType VALID_DRIVER_TYPES[] = {
     DeviceDriverType::PS3,
     DeviceDriverType::PSCLASSIC, 
     DeviceDriverType::WIIU,
+    DeviceDriverType::WII,
     DeviceDriverType::WEBAPP,
     #if defined(XREMOTE_ROM_AVAILABLE)
     DeviceDriverType::XBOXOG_XR,
@@ -43,6 +46,7 @@ static constexpr DeviceDriverType VALID_DRIVER_TYPES[] = {
     DeviceDriverType::DINPUT, 
     DeviceDriverType::SWITCH, 
     DeviceDriverType::WIIU,
+    DeviceDriverType::WII,
     DeviceDriverType::WEBAPP,
 
 #else // MAX_GAMEPADS == 1
@@ -51,6 +55,7 @@ static constexpr DeviceDriverType VALID_DRIVER_TYPES[] = {
     DeviceDriverType::DINPUT, 
     DeviceDriverType::SWITCH, 
     DeviceDriverType::WIIU,
+    DeviceDriverType::WII,
     DeviceDriverType::WEBAPP,
     DeviceDriverType::PS3,
     DeviceDriverType::PSCLASSIC, 
@@ -127,7 +132,7 @@ bool UserSettings::check_for_driver_change(Gamepad& gamepad)
 
     uint32_t current_button_combo = BUTTON_COMBO(gp_in.buttons, gp_in.dpad);
 
-    if (!(current_button_combo & (static_cast<uint32_t>(Gamepad::BUTTON_START) << 16)) || 
+    if (!(current_button_combo & (static_cast<uint32_t>(Gamepad::BUTTON_START) << 16)) ||
         last_button_combo != current_button_combo)
     {
         last_button_combo = current_button_combo;
@@ -157,13 +162,19 @@ bool UserSettings::check_for_driver_change(Gamepad& gamepad)
 
     if (new_driver == DeviceDriverType::NONE || new_driver == current_driver_)
     {
+#if defined(CONFIG_OGXM_DEBUG)
+        if (new_driver == DeviceDriverType::NONE)
+            OGXM_LOG("WII driver check: combo 0x" + std::to_string(current_button_combo) + " no match\n");
+        else
+            OGXM_LOG("WII driver check: same driver " + OGXM_TO_STRING(current_driver_) + ", no change\n");
+#endif
         return false;
     }
 
     current_driver_ = new_driver;
-
+    OGXM_LOG("WII driver check: returning true, new_driver=" + OGXM_TO_STRING(new_driver) + "\n");
     return true;
-#endif  // !(CONFIG_OGXM_FIXED_DRIVER && !CONFIG_OGXM_FIXED_DRIVER_ALLOW_COMBOS)
+#endif
 }
 
 //Disconnects usb and resets pico, call from core0
@@ -226,7 +237,7 @@ bool UserSettings::store_profile_and_driver_type(DeviceDriverType new_driver_typ
 }
 
 //Disconnects usb and resets pico if it's a new & valid mode, call from core0
-void UserSettings::store_driver_type(DeviceDriverType new_driver) 
+void UserSettings::store_driver_type(DeviceDriverType new_driver)
 {
     if (!is_valid_driver(new_driver))
     {
@@ -241,6 +252,40 @@ void UserSettings::store_driver_type(DeviceDriverType new_driver)
     nvs_tool_.write(DRIVER_TYPE_KEY(), &new_driver, sizeof(uint8_t));
 
     board_api::reboot();
+}
+
+// Store driver and reboot only; no disconnect_all(). Use from Core0.
+void UserSettings::store_driver_type_and_reboot(DeviceDriverType new_driver)
+{
+    if (!is_valid_driver(new_driver))
+    {
+        OGXM_LOG("Invalid driver type during store_and_reboot: " + OGXM_TO_STRING(new_driver) + "\n");
+        return;
+    }
+
+    OGXM_LOG("Storing new driver type and rebooting: " + OGXM_TO_STRING(new_driver) + "\n");
+
+    nvs_tool_.write(DRIVER_TYPE_KEY(), &new_driver, sizeof(uint8_t));
+
+    board_api::reboot();
+}
+
+// Store driver to flash only. Used from Core0 after watchdog reboot (Wii exit) or from flash_safe_execute callback.
+// Updates in-memory current_driver_ so the rest of run() sees the new mode.
+bool UserSettings::store_driver_type_only(DeviceDriverType new_driver)
+{
+    if (!is_valid_driver(new_driver))
+    {
+        OGXM_LOG("Invalid driver type in store_driver_type_only: " + OGXM_TO_STRING(new_driver) + "\n");
+        return false;
+    }
+
+    OGXM_LOG("Storing new driver type (flash only): " + OGXM_TO_STRING(new_driver) + "\n");
+
+    nvs_tool_.write(DRIVER_TYPE_KEY(), &new_driver, sizeof(uint8_t));
+    current_driver_ = new_driver;
+
+    return true;
 }
 
 uint8_t UserSettings::get_active_profile_id(const uint8_t index)
@@ -303,9 +348,9 @@ DeviceDriverType UserSettings::get_current_driver()
     }
 
     uint8_t stored_value = 0;
-    nvs_tool_.read(DRIVER_TYPE_KEY(), &stored_value, sizeof(uint8_t));
+    bool read_ok = nvs_tool_.read(DRIVER_TYPE_KEY(), &stored_value, sizeof(uint8_t));
 
-    if (is_valid_driver(static_cast<DeviceDriverType>(stored_value)))
+    if (read_ok && is_valid_driver(static_cast<DeviceDriverType>(stored_value)))
     {
         OGXM_LOG("Driver type read from flash: " + OGXM_TO_STRING(static_cast<DeviceDriverType>(stored_value)) + "\n");
 
@@ -313,7 +358,14 @@ DeviceDriverType UserSettings::get_current_driver()
         return current_driver_;
     }
 
+#if defined(CONFIG_OGXM_DEBUG)
+    if (!read_ok)
+        OGXM_LOG("Driver type read failed or key missing, using default\n");
+    else
+        OGXM_LOG("Driver type from flash raw=0x" + std::to_string(stored_value) + " invalid, using default " + OGXM_TO_STRING(DEFAULT_DRIVER()) + "\n");
+#else
     OGXM_LOG("Invalid driver type read from flash, setting default driver\n");
+#endif
 
     current_driver_ = DEFAULT_DRIVER();
     return current_driver_;

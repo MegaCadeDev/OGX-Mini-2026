@@ -69,6 +69,7 @@ set(SOURCES_BOARD
     ${SRC}/USBDevice/DeviceDriver/PS3/PS3.cpp
     ${SRC}/USBDevice/DeviceDriver/Switch/Switch.cpp
     ${SRC}/USBDevice/DeviceDriver/WiiU/WiiU.cpp
+    ${SRC}/USBDevice/DeviceDriver/Wii/Wii.cpp
     ${SRC}/USBDevice/DeviceDriver/XInput/XInput.cpp
     ${SRC}/USBDevice/DeviceDriver/XboxOG/XboxOG_GP.cpp
     ${SRC}/USBDevice/DeviceDriver/XboxOG/XboxOG_SB.cpp
@@ -122,17 +123,20 @@ if (OGXM_BOARD STREQUAL "PI_PICO")
 elseif (OGXM_BOARD STREQUAL "PI_PICO2")
     add_compile_definitions(CONFIG_OGXM_BOARD_PI_PICO2=1)
     set(EN_USB_HOST TRUE)
+    set(PICO_BOARD pico2)
     set(PICO_PLATFORM rp2350)
     set(FLASH_SIZE_MB 4)
 
 elseif(OGXM_BOARD STREQUAL "PI_PICOW")
     add_compile_definitions(CONFIG_OGXM_BOARD_PI_PICOW=1)
     set(EN_BLUETOOTH TRUE)
+    set(EN_USB_HOST TRUE)  # PIO USB host for Wii mode (controller on external USB)
     set(PICO_BOARD pico_w)
 
 elseif(OGXM_BOARD STREQUAL "PI_PICO2W")
     add_compile_definitions(CONFIG_OGXM_BOARD_PI_PICO2W=1)
     set(EN_BLUETOOTH TRUE)
+    set(EN_USB_HOST TRUE)  # PIO USB host for Wii mode (controller on external USB)
     set(PICO_BOARD pico2_w)
     set(PICO_PLATFORM rp2350)
     set(FLASH_SIZE_MB 4)
@@ -185,15 +189,16 @@ else()
 endif()
 
 # Optional: default or lock USB output mode.
-# OGXM_FIXED_DRIVER = one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, PS3, PSCLASSIC, WEBAPP.
+# OGXM_FIXED_DRIVER = one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP.
 #   Empty = use first valid driver as default, combos enabled.
 #   Set = use that mode as default (first boot / NVS init). If OGXM_FIXED_DRIVER_ALLOW_COMBOS=OFF (default):
 #     combos disabled, mode locked. If OGXM_FIXED_DRIVER_ALLOW_COMBOS=ON: default is this mode, combos still work.
-set(OGXM_FIXED_DRIVER "" CACHE STRING "Default/lock output mode. One of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, PS3, PSCLASSIC, WEBAPP. Empty = combos enabled.")
+set(OGXM_FIXED_DRIVER "" CACHE STRING "Default/lock output mode. One of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP. Empty = combos enabled.")
 set(OGXM_FIXED_DRIVER_ALLOW_COMBOS OFF CACHE BOOL "If OGXM_FIXED_DRIVER is set: ON = use it as default but allow combos to change mode; OFF = lock to that mode, combos disabled.")
 if(OGXM_FIXED_DRIVER)
     add_compile_definitions(CONFIG_OGXM_FIXED_DRIVER=1)
-    if(OGXM_FIXED_DRIVER_ALLOW_COMBOS)
+    # WII is build-only: no combos to switch into or out of Wii.
+    if(OGXM_FIXED_DRIVER_ALLOW_COMBOS AND NOT (OGXM_FIXED_DRIVER STREQUAL "WII"))
         add_compile_definitions(CONFIG_OGXM_FIXED_DRIVER_ALLOW_COMBOS=1)
     endif()
     if(OGXM_FIXED_DRIVER STREQUAL "XBOXOG")
@@ -214,12 +219,16 @@ if(OGXM_FIXED_DRIVER)
         add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=8)
     elseif(OGXM_FIXED_DRIVER STREQUAL "WIIU")
         add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=9)
+    elseif(OGXM_FIXED_DRIVER STREQUAL "WII")
+        add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=10)
     elseif(OGXM_FIXED_DRIVER STREQUAL "WEBAPP")
         add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=100)
     else()
-        message(FATAL_ERROR "OGXM_FIXED_DRIVER must be one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, PS3, PSCLASSIC, WEBAPP")
+        message(FATAL_ERROR "OGXM_FIXED_DRIVER must be one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP")
     endif()
-    if(OGXM_FIXED_DRIVER_ALLOW_COMBOS)
+    if(OGXM_FIXED_DRIVER STREQUAL "WII")
+        message(STATUS "Wii-only build: ${OGXM_FIXED_DRIVER} (combos disabled, build option only)")
+    elseif(OGXM_FIXED_DRIVER_ALLOW_COMBOS)
         message(STATUS "Default output mode: ${OGXM_FIXED_DRIVER} (combos enabled)")
     else()
         message(STATUS "Fixed output mode: ${OGXM_FIXED_DRIVER} (combos disabled)")
@@ -288,6 +297,25 @@ if(EN_BLUETOOTH)
         pico_btstack_cyw43
         bluepad32
     )
+
+    # Wii mode: Wiimote BT emulator (Pico W/2W with USB host)
+    if(EN_USB_HOST AND (OGXM_BOARD STREQUAL "PI_PICOW" OR OGXM_BOARD STREQUAL "PI_PICO2W"))
+        message(STATUS "Wii Wiimote lib enabled.")
+        list(APPEND SOURCES_BOARD
+            ${SRC}/Wii/utils.c
+            ${SRC}/Wii/WiiReportConverter.cpp
+            ${SRC}/Wii/wiimote-lib/wiimote_btstack.c
+            ${SRC}/Wii/wiimote-lib/wiimote.c
+            ${SRC}/Wii/wiimote-lib/wm_reports.c
+            ${SRC}/Wii/wiimote-lib/motion.c
+            ${SRC}/Wii/wiimote-lib/wm_crypto.c
+            ${SRC}/Wii/wiimote-lib/inet.c
+        )
+        list(APPEND INC_DIRS_BOARD
+            ${SRC}/Wii
+            ${SRC}/Wii/wiimote-lib
+        )
+    endif()
 endif()
 
 if(EN_RGB)
@@ -351,7 +379,8 @@ if(EXISTS ${SRC}/USBDevice/DeviceDriver/XboxOG/tud_xid/tud_xid_xremote_rom.h)
     add_definitions(-DXREMOTE_ROM_AVAILABLE)
 endif()
 
-if(NOT EN_BLUETOOTH)
+# RP2040-only: force generic boot2 when no Bluetooth (pico2/pico2_w use board's boot2 choice)
+if(NOT EN_BLUETOOTH AND NOT (OGXM_BOARD STREQUAL "PI_PICO2") AND NOT (OGXM_BOARD STREQUAL "PI_PICO2W"))
     add_compile_definitions(PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H=1)
     add_compile_definitions(PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
 endif()
@@ -376,15 +405,18 @@ add_executable(${FW_NAME} ${SOURCES_BOARD})
 set(BUILD_STR "")
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    if(OGXM_BOARD STREQUAL "PI_PICOW")
-        message(FATAL_ERROR "Debug build will not work with the Pico W currently")
-    endif()
-
-    message(STATUS "Debug build enabled.")
+    message(STATUS "Debug build enabled (UART logging).")
     set(BUILD_STR "-Debug")
 
-    set(TX_PIN 0)
-    set(RX_PIN 1)
+    # Pico W/2W: use UART1 on GP4 (TX) / GP5 (RX) - valid UART pins, avoids PIO USB (GP0/1) in Wii mode
+    # Note: GP10/11 are not valid UART pins on RP2040/RP2350
+    if(OGXM_BOARD STREQUAL "PI_PICOW" OR OGXM_BOARD STREQUAL "PI_PICO2W")
+        set(TX_PIN 4)
+        set(RX_PIN 5)
+    else()
+        set(TX_PIN 0)
+        set(RX_PIN 1)
+    endif()
     set(UART_PORT)
 
     include(${CMAKE_CURRENT_LIST_DIR}/cmake/get_pico_uart_port.cmake)

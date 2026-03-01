@@ -29,6 +29,11 @@
 
 #elif defined(CONFIG_OGXM_BOARD_PI_PICOW) || defined(CONFIG_OGXM_BOARD_PI_PICO2W)
     #define OGXM_BOARD          PI_PICOW
+    // PIO USB host for external port (e.g. Wii mode: controller on USB, BT for Wiimote)
+    #define PIO_USB_DP_PIN      0  // D+ = GP0, D- = GP1
+    #ifndef PIO_USB_SWAP_DP_DM
+    #define PIO_USB_SWAP_DP_DM  0  // set 1 if controller powers but does not enumerate
+    #endif
 
 #elif defined(CONFIG_OGXM_BOARD_RP2040_ZERO)
     #define OGXM_BOARD          RP2040_ZERO

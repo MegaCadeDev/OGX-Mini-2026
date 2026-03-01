@@ -13,6 +13,9 @@ Firmware for the RP2040, capable of emulating gamepads for several game consoles
 - Playstation Classic
 - DInput
 - Wii U (GameCube Adapter)
+- **Wii (Wiimote)** — Pico W / Pico 2 W only; build with `-DOGXM_FIXED_DRIVER=WII`. See [Wii Mode Guide](Firmware/RP2040/docs/Wii_Mode_Guide.md).
+
+**RP2040 output modes (USB device):** XInput (Xbox 360 + XSM3), DInput, PS3, Switch, Wii U, **Wii (Wiimote, build-option only)**, Xbox OG (Gamepad / Steel Battalion / XRemote), PS Classic, Web App. On Pico 2 W, Bluetooth runs on Core1 and USB on Core0; you can build with a fixed mode or use button combos to switch at runtime (Start + D-pad held ~3 s). **Wii is not in the combo list** — use a Wii-only build to get Wiimote output.
 
 ## Changing platforms
 By default the OGX-Mini will emulate an OG Xbox controller, you must hold a button combo for 3 seconds to change which platform you want to play on. Your chosen mode will persist after powering off the device. 
@@ -38,6 +41,7 @@ Start = Plus (Switch) = Options (Dualsense/DS4)
 - Web Application Mode
     - Start + Left Bumper + Right Bumper
 
+**Wii (Wiimote)** is not selectable by combo. Build with `-DOGXM_FIXED_DRIVER=WII` for a Wii-only firmware; see [Wii Mode Guide](Firmware/RP2040/docs/Wii_Mode_Guide.md).
 
 After a new mode is stored, the RP2040 will reset itself so you don't need to unplug it.
 
@@ -89,7 +93,10 @@ Please visit [**this page**](https://bluepad32.readthedocs.io/en/latest/supporte
 Note: These features have been added to the Pico W/ Pico 2 W firmware support, I do not have the other boards to test and implement the same fixes at this time.
 
 ==== Version 1.0.0.4a ===
+- **Wii (Wiimote) output mode** — On Pico W and Pico 2 W, build with `-DOGXM_FIXED_DRIVER=WII` for a Wii-only firmware. The adapter appears as a Wiimote over Bluetooth; use a USB gamepad on the external PIO USB port. Supports No Extension, Nunchuk, and Classic Controller report modes (cycle with Home + D-pad Down). See [Wii Mode Guide](Firmware/RP2040/docs/Wii_Mode_Guide.md). _Approach and mappings based on [PicoGamepadConverter](https://github.com/wiredopposite/PicoGamepadConverter)._
 - Xbox 360 no longer requires the USB patch to authenticate, uses the same authentication as Joypad-OS to do official handshake with Retail consoles. Homebrew/ Jailbreaking is no longer required to use the XINPUT mode on 360 but it will no longer output to PC.
+- **Rumble fix for Xbox 360 controllers** — Rumble on 360 pads is now handled correctly when using the adapter (including wireless RUMBLE_ENABLE sequence). _Xbox 360 host rumble handling based on [GP2040-CE](https://github.com/OpenStickCommunity/GP2040-CE)._
+- **Pico 2 / Pico 2 W build fixes** — Firmware builds and runs correctly on RP2350 (Pico 2 and Pico 2 W).
 - Improved latency on Xbox 360 and PS3 controllers.
 - Added build flags so you can make it only output in a specific mode and disable mode switching.
 - Using a PS5 controller allows you to tap the touchpad to enable or disable the adaptive triggers.
@@ -150,9 +157,8 @@ If your third party controller isn't working, but the original version is listed
 
 ## Build
 ### RP2040
-You can compile this for different boards with the CMake argument ```OGXM_BOARD``` while configuring the project. 
+Build with **CMake** from the `Firmware/RP2040` directory. You can compile for different boards with the CMake argument ```OGXM_BOARD```:
 
-The options are:
 - ```PI_PICO``` 
 - ```PI_PICO2``` 
 - ```PI_PICOW``` 
@@ -163,7 +169,7 @@ The options are:
 - ```ESP32_BLUERETRO_I2C``` 
 - ```EXTERNAL_4CH_I2C```
 
-You can also set ```MAX_GAMEPADS``` which, if greater than one, will only support DInput (PS3) and Switch.
+You can also set ```MAX_GAMEPADS``` (if &gt; 1, only DInput/PS3 and Switch are supported). **Optional:** ```OGXM_FIXED_DRIVER``` to lock output mode (e.g. ```XINPUT```, ```PS3```); ```OGXM_FIXED_DRIVER_ALLOW_COMBOS=ON``` to keep combos when fixed. ```MAIN_LOOP_DELAY_US``` (default ```0```) sets main-loop delay for lower CPU use (e.g. ```250```).
 
 You'll need git, python3, CMake, Ninja and the GCC ARM toolchain installed. CMake scripts will patch some files in Bluepad32 and BTStack and also make sure all git submodules (plus their submodules and dependencies) are downloaded. Here's an example on Windows:
 ```
@@ -172,7 +178,16 @@ cd OGX-Mini-2026/Firmware/RP2040
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOGXM_BOARD=PI_PICOW -DMAX_GAMEPADS=1
 cmake --build build
 ```
-Or just install the GCC ARM toolchain and use the CMake Tools extension in VSCode.
+Outputs (`.elf`, `.uf2`, etc.) are in the build directory; flash the `.uf2` to the board. Or use the GCC ARM toolchain and CMake Tools extension in VSCode.
+
+**Latency:** The adapter sends the latest gamepad state whenever the USB endpoint is free (XInput and similar), and the main loop has no added delay by default, so the host gets updates at its poll rate with minimal latency. See [Firmware/RP2040/docs/IMPROVEMENTS.md](Firmware/RP2040/docs/IMPROVEMENTS.md#latency-reduction) for details.
+
+### Firmware documentation
+| Document | Description |
+|---------|-------------|
+| [Wii_Mode_Guide.md](Firmware/RP2040/docs/Wii_Mode_Guide.md) | Wii mode (build-option only): No Extension / Nunchuk / Classic, USB host, sync and auto-connect, button mapping. |
+| [PICO2W_WII_USB_SETUP.md](Firmware/RP2040/docs/PICO2W_WII_USB_SETUP.md) | Pico 2 W / Pico W: USB host wiring (PIO USB), pins, build, troubleshooting for Wii mode. |
+| [IMPROVEMENTS.md](Firmware/RP2040/docs/IMPROVEMENTS.md) | Firmware improvements: PS3 fixes, latency, XInput/360. |
 
 ### ESP32
 Please see the Hardware directory for a diagram showing how to hookup the ESP32 to your RP2040.
@@ -186,9 +201,10 @@ When you build with ESP-IDF, Cmake will run a python script that copies the nece
 
 ## Other projects that have helped enhance this fork
 
-- **[Joypad OS](https://github.com/joypad-ai/joypad-os)** — Reference for Xbox 360 (XSM3) authentication with retail consoles; XInput mode on 360 follows the same approach.
+- **[Joypad OS](https://github.com/joypad-ai/joypad-os)** — Reference for Xbox 360 (XSM3) authentication with retail consoles; XInput mode on 360 follows the same approach. Descriptors and XSM3 flow are aligned with joypad-os; single config, full XSM3 security string, init/verify in main loop; USB is initialized before Core1 so the 360 can enumerate while BT loads.
 - **[Bluepad32](https://github.com/ricardoquesada/bluepad32)** — Bluetooth controller support (Pico W / Pico 2 W).
-- **[GP2040-CE](https://github.com/OpenStickCommunity/GP2040-CE)** — USB device output modes (credited in the root LICENSE).
+- **[GP2040-CE](https://github.com/OpenStickCommunity/GP2040-CE)** — USB device output modes and Xbox 360 controller rumble fix (host-side rumble handling, including wireless RUMBLE_ENABLE sequence); credited in the root LICENSE.
+- **[PicoGamepadConverter](https://github.com/wiredopposite/PicoGamepadConverter)** — Wii (Wiimote) output mode: approach of USB gamepad on PIO USB with Bluetooth reserved for the Wiimote link, and button/stick mappings for No Extension, Nunchuk, and Classic Controller report modes.
 
 ## Licenses and third-party code
 

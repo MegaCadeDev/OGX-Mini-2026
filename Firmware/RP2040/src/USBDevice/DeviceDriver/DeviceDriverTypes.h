@@ -15,6 +15,7 @@ enum class DeviceDriverType : uint8_t
     PSCLASSIC,
     SWITCH,
     WIIU,
+    WII,   // Wiimote (Pico W/2W: controller on PIO USB, BT for Wii link)
     WEBAPP = 100,
     UART_BRIDGE
 };

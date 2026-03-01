@@ -258,9 +258,9 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
     uni_gamepad_t *uni_gp = &controller->gamepad;
     int idx = uni_hid_device_get_idx_for_instance(device);
 
-    // PS5: touchpad click toggles adaptive triggers on/off
+    // PS5: capture/mute button toggles adaptive triggers (touchpad click not in Bluepad32 misc_buttons)
     if (device->controller_type == CONTROLLER_TYPE_PS5Controller && idx >= 0 && idx < static_cast<int>(MAX_GAMEPADS)) {
-        bool touchpad_clicked = (uni_gp->misc_buttons & MISC_BUTTON_TOUCHPAD) != 0;
+        bool touchpad_clicked = (uni_gp->misc_buttons & MISC_BUTTON_CAPTURE) != 0;
         if (touchpad_clicked && !prev_touchpad_clicked_[idx]) {
             adaptive_trigger_enabled_[idx] = !adaptive_trigger_enabled_[idx];
             if (adaptive_trigger_enabled_[idx]) {

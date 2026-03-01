@@ -12,3 +12,6 @@ Firmware/ESP32/sdkconfig.old
 Firmware/external/pico-sdk
 Firmware/external/picotool
 Tools/dvd-dongle-rom.bin
+
+# Local comparison doc (not for GitHub)
+Firmware/RP2040/docs/XInput_joypad-os_comparison.md

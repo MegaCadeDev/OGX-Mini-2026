@@ -37,6 +37,10 @@ public:
     uint8_t get_active_profile_id(const uint8_t index);
 
     void store_driver_type(DeviceDriverType new_driver_type);
+    /** Store driver and reboot without disconnect_all(); use from Core0. */
+    void store_driver_type_and_reboot(DeviceDriverType new_driver_type);
+    /** Store driver to flash only (no disconnect, no reboot). Use from flash_safe_execute callback (Wii exit); caller must reboot after. */
+    bool store_driver_type_only(DeviceDriverType new_driver_type);
     bool store_profile(uint8_t index, const UserProfile& profile);
     bool store_profile_and_driver_type(DeviceDriverType new_driver_type, uint8_t index, const UserProfile& profile);
 
