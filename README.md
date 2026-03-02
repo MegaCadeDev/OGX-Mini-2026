@@ -163,7 +163,8 @@ Build with **CMake** from the `Firmware/RP2040` directory. You can compile for d
 - ```PI_PICO2``` 
 - ```PI_PICOW``` 
 - ```PI_PICO2W``` 
-- ```RP2040_ZERO``` 
+- ```RP2040_ZERO```
+- ```RP2350_USB_A``` 
 - ```ADAFRUIT_FEATHER``` 
 - ```ESP32_BLUEPAD32_I2C```
 - ```ESP32_BLUERETRO_I2C``` 
