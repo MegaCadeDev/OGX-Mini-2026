@@ -35,11 +35,11 @@ Descriptors and XSM3 flow are aligned with [joypad-os](https://github.com/joypad
 
 ---
 
-## PS3 mode — input delays and stuck inputs
+## PS3 mode — input delays, stuck inputs, Home button, and analog stick emulation
 
-**Source:** Fixes from [OGX-Mini-Plus](https://github.com/guimaraf/OGX-Mini-Plus) (v1.1.1) — *“PS3 Driver Fixes - Fixed input delays and stuck inputs.”*
+**Source:** Fixes from [OGX-Mini-Plus](https://github.com/guimaraf/OGX-Mini-Plus) (v1.1.1) — *“PS3 Driver Fixes - Fixed input delays and stuck inputs.”* Plus subsequent improvements for Home (PS) button and DS3-accurate analog sticks.
 
-**File:** `src/USBDevice/DeviceDriver/PS3/PS3.cpp`
+**Files:** `src/USBDevice/DeviceDriver/PS3/PS3.cpp`, `src/Descriptors/PS3.h`
 
 ### Changes
 
@@ -47,12 +47,13 @@ Descriptors and XSM3 flow are aligned with [joypad-os](https://github.com/joypad
    - `report_in_.l2_axis` and `report_in_.r2_axis` are now set from `gp_in.trigger_l` and `gp_in.trigger_r`.
    - Previously left at zero, which could cause stuck or incorrect trigger behaviour on PS3. Filling these is required for many PS3 games.
 
-2. **Joystick centre and deadzone**
-   - Replaced generic `Scale::int16_to_uint8()` (centre 128) with PS3-specific mapping:
-     - Centre **0x7F (127)** and ~5% deadzone (~1640 on a ±32768 scale).
-     - In deadzone, sticks report exactly 0x7F so the console does not see drift.
-     - Outside deadzone, values are scaled into 0–254 so 127 remains the logical centre.
-   - Avoids stick drift and “stuck” stick behaviour caused by wrong centre or jitter.
+2. **DualShock 3–accurate analog sticks**
+   - Sticks now match the real DS3/Sixaxis HID spec:
+     - **Range:** 0–255 (full 8-bit; was 0–254).
+     - **Center:** **0x80 (128)** at rest and in deadzone (was 0x7F). Matches Linux gamepad spec and HID logical max 255.
+     - **Deadzone:** ~1.5% (512 on ±32768) so small movements register without drift; in deadzone the report sends 0x80.
+     - **Scaling:** Linear map from signed 16-bit input to 0–255 with correct rounding so center (0) → 128.
+   - Reduces stick drift and matches console expectations for DS3-compatible games.
 
 3. **D-pad in analog mode**
    - When `gamepad.analog_enabled()` is true, D-pad axes (`up_axis`, `down_axis`, `left_axis`, `right_axis`) are now derived from the **digital** D-pad bits instead of `gp_in.analog[ANALOG_OFF_*]`.
@@ -64,6 +65,11 @@ Descriptors and XSM3 flow are aligned with [joypad-os](https://github.com/joypad
      - `cross_axis` = BUTTON_A (was BUTTON_B)
      - `square_axis` = BUTTON_X (was BUTTON_A)
    - Circle / Cross / Square now match the intended face buttons.
+
+5. **Home (PS) button**
+   - Report is built only when `tud_hid_ready()` (right before send), using `gamepad.get_pad_in()` so the console gets the latest state (helps with DS4/DS5 over Bluetooth).
+   - **PS button latch:** When `BUTTON_SYS` is set, the driver latches the PS bit for 8 consecutive report frames so short taps are not missed by timing. `buttons[2]` bit 0 (PS) and bit 1 (Touchpad) are set from `BUTTON_SYS` and `BUTTON_MISC`.
+   - If Home does not work over Bluetooth, try a wired controller (some consoles only react to the first controller's Home).
 
 ---
 
@@ -110,5 +116,5 @@ In XInput mode, the adapter no longer sends a report only when `gamepad.new_pad_
 | Area | Improvement |
 |------|-------------|
 | **XInput (360)** | XSM3 authentication and descriptors aligned with joypad-os; adapter works on Xbox 360 with BT controllers (PS5, Xbox One). |
-| **PS3** | Stuck inputs and input delays addressed via L2/R2 axes, joystick centre/deadzone, D-pad handling, and face button mapping. |
+| **PS3** | Stuck inputs and delays addressed via L2/R2 axes; DS3-accurate sticks (0–255, center 0x80, ~1.5% deadzone); D-pad and face button mapping; Home (PS) button with 8-frame latch for BT controllers. |
 | **Latency** | Main loop delay default **0 µs** (low latency); XInput always sends latest state when USB is ready for lower latency with PS5/Xbox One over BT. |

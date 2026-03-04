@@ -1,2 +1,2 @@
 set(FW_NAME "OGX-Mini")
-set(FW_VERSION "v1.0.0a4")
+set(FW_VERSION "v1.0.0a5")

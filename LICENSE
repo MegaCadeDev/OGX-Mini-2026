@@ -13,6 +13,10 @@ v2.1 (or later). A copy of the LGPL v2.1 is included in
 Firmware/external/libxsm3/LICENSE.txt. libxsm3 also uses ExCrypt (3-clause BSD); 
 see Firmware/external/libxsm3/README.md for credits.
 
+Xbox 360 controller rumble/vibration: Host-side rumble handling (including 
+wireless RUMBLE_ENABLE sequence) is attributed to faithvoid 
+(https://github.com/faithvoid).
+
 Copyright (c) 2024 wiredOpposite (wiredopposite.com)
 Copyright (c) 2024 OpenStickCommunity (gp2040-ce.info)
 Copyright (c) 2021 Jason Skuby (mytechtoybox.com)

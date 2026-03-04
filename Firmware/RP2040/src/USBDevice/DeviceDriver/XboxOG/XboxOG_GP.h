@@ -3,6 +3,7 @@
 
 #include <cstdint>
 
+#include "pico/time.h"
 #include "USBDevice/DeviceDriver/DeviceDriver.h"
 #include "Descriptors/XboxOG.h"
 
@@ -23,6 +24,11 @@ public:
 private:
     XboxOG::GP::InReport in_report_;
     XboxOG::GP::OutReport out_report_;
+
+    // Guide (SYS) button: tap = Start, hold 1s = soft IGR, hold 3s = shutdown
+    bool sys_button_pressed_{false};
+    bool sys_button_combo_sent_{false};
+    absolute_time_t sys_button_press_time_;
 };
 
 #endif // _XBOXGOG_DEVICE_H_

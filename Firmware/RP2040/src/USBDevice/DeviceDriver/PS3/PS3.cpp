@@ -20,7 +20,14 @@ void PS3Device::initialize()
 
 void PS3Device::process(const uint8_t idx, Gamepad& gamepad) 
 {
-    if (gamepad.new_pad_in())
+    // Build report only when we're about to send so the console gets the freshest state
+    // (helps Home button and analog timing with DS4/DS5 over Bluetooth).
+    if (tud_suspended())
+    {
+        tud_remote_wakeup();
+    }
+
+    if (tud_hid_ready())
     {
         Gamepad::PadIn gp_in = gamepad.get_pad_in();
         report_in_ = PS3::InReport();
@@ -65,7 +72,13 @@ void PS3Device::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_START)    report_in_.buttons[0] |= PS3::Buttons0::START;
         if (gp_in.buttons & Gamepad::BUTTON_L3)       report_in_.buttons[0] |= PS3::Buttons0::L3;
         if (gp_in.buttons & Gamepad::BUTTON_R3)       report_in_.buttons[0] |= PS3::Buttons0::R3;
-        if (gp_in.buttons & Gamepad::BUTTON_SYS)      report_in_.buttons[2] |= PS3::Buttons2::SYS;
+        // DS3 report: buttons[2] byte = PS (bit0), Touchpad (bit1). Latch PS so DS4/DS5 over BT short taps aren't missed.
+        if (gp_in.buttons & Gamepad::BUTTON_SYS)
+            sys_button_latch_frames_ = 8;
+        if (sys_button_latch_frames_ > 0) {
+            report_in_.buttons[2] |= PS3::Buttons2::SYS;
+            sys_button_latch_frames_--;
+        }
         if (gp_in.buttons & Gamepad::BUTTON_MISC)     report_in_.buttons[2] |= PS3::Buttons2::TP;
 
         if (gp_in.trigger_l) report_in_.buttons[1] |= PS3::Buttons1::L2;
@@ -75,22 +88,24 @@ void PS3Device::process(const uint8_t idx, Gamepad& gamepad)
         report_in_.l2_axis = gp_in.trigger_l;
         report_in_.r2_axis = gp_in.trigger_r;
 
-        // PS3 uses 0x7F (127) as joystick center; 5% deadzone avoids drift/stuck inputs
-        constexpr int16_t DEADZONE_LEFT = 1640;   // ~5% of 32768
-        constexpr int16_t DEADZONE_RIGHT = 1640;
-        constexpr uint8_t PS3_CENTER = 0x7F;
+        // Emulate DS3/Sixaxis sticks: 8-bit range 0–255, center 0x80 (128). Small deadzone (~1.5%) like real hardware.
+        constexpr int16_t DEADZONE = 512;   // ~1.5% of 32768
+        constexpr uint8_t PS3_CENTER = PS3::JOYSTICK_MID;  // 0x80
 
         auto joystick_to_ps3 = [](int16_t value, int16_t deadzone) -> uint8_t {
             if (value > -deadzone && value < deadzone)
                 return PS3_CENTER;
-            int32_t scaled = ((static_cast<int32_t>(value) + 32768) * 254) / 65535;
+            int32_t in = static_cast<int32_t>(value) + 32768;
+            int32_t scaled = (in * 255 + 32768) / 65535;
+            if (scaled < 0) scaled = 0;
+            if (scaled > 255) scaled = 255;
             return static_cast<uint8_t>(scaled);
         };
 
-        report_in_.joystick_lx = joystick_to_ps3(gp_in.joystick_lx, DEADZONE_LEFT);
-        report_in_.joystick_ly = joystick_to_ps3(gp_in.joystick_ly, DEADZONE_LEFT);
-        report_in_.joystick_rx = joystick_to_ps3(gp_in.joystick_rx, DEADZONE_RIGHT);
-        report_in_.joystick_ry = joystick_to_ps3(gp_in.joystick_ry, DEADZONE_RIGHT);
+        report_in_.joystick_lx = joystick_to_ps3(gp_in.joystick_lx, DEADZONE);
+        report_in_.joystick_ly = joystick_to_ps3(gp_in.joystick_ly, DEADZONE);
+        report_in_.joystick_rx = joystick_to_ps3(gp_in.joystick_rx, DEADZONE);
+        report_in_.joystick_ry = joystick_to_ps3(gp_in.joystick_ry, DEADZONE);
 
         if (gamepad.analog_enabled())
         {
@@ -121,16 +136,7 @@ void PS3Device::process(const uint8_t idx, Gamepad& gamepad)
             report_in_.r1_axis = (gp_in.buttons & Gamepad::BUTTON_RB) ? 0xFF : 0;
             report_in_.l1_axis = (gp_in.buttons & Gamepad::BUTTON_LB) ? 0xFF : 0;
         }
-    }
 
-    if (tud_suspended())
-    {
-        tud_remote_wakeup();
-    }
-
-    if (tud_hid_ready())
-    {
-        //PS3 seems to start using stale data if a report isn't sent every frame
         tud_hid_report(0, reinterpret_cast<uint8_t*>(&report_in_), sizeof(PS3::InReport));
     }
 
