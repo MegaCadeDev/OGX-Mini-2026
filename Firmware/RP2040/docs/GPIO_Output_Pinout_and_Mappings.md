@@ -32,6 +32,9 @@ PS1/PS2 use a **9-pin** controller connector. Below: **GPIO** = RP2040 pin (adap
 
 **Output mode:** Connect each GPIO to the same-numbered connector pin and Pico **GND** to connector **4** (do not use console VCC). **Input mode:** Same GPIO↔connector data mapping; connect Pico **3V3** → plug pin **5**, Pico **GND** → plug pin **4** to power the controller.
 
+**Can the Pico be powered by the PS2 controller port?**  
+The PS1/PS2 controller port provides **3.3 V** on connector pin **5** (VCC) and **GND** on pin **4**. In theory you could power the Pico from the port by connecting pin 5 to the Pico’s **VSYS** (e.g. pin 39 on the Pico), since VSYS accepts about 1.8–5.5 V. **This is not recommended:** the port is designed to power a small controller, not an MCU; current may be limited and the adapter’s draw (especially with USB or Bluetooth) can exceed what the port safely supplies. The supported setup is to power the Pico via USB or an external 3.3 V / 5 V supply and only connect **GND** and the data lines to the console.
+
 ### Default controller mapping (PadIn → PS1/PS2)
 
 | Console (PS1/PS2) | Adapter input (PadIn) |
