@@ -9,6 +9,15 @@
 #include "psxSPI.pio.h"
 #include "USBDevice/DeviceDriver/PS1PS2/psx_simulator.h"
 
+#if defined(CONFIG_OGXM_BOARD_PI_PICOW) || defined(CONFIG_OGXM_BOARD_PI_PICO2W)
+/* Pico W / Pico 2 W: do not use GPIO IRQ for PIN_SEL; CYW43 uses gpio_add_raw_irq_handler and conflicts. */
+#define PSX_DEVICE_POLLED_SEL 1
+#else
+#include "hardware/irq.h"
+#include "hardware/structs/io_bank0.h"
+#define PSX_DEVICE_POLLED_SEL 0
+#endif
+
 #define MODE_DIGITAL        0x41
 #define MODE_ANALOG         0x73
 #define MODE_ANALOG_PRESSURE 0x79
@@ -47,6 +56,7 @@ static uint offsetDatWriter;
 
 volatile PSXInputState *inputState;
 static void (*core1_function)(void);
+static bool poll_mode = false;
 
 static uint8_t mode = MODE_DIGITAL;
 static bool config = false;
@@ -359,16 +369,26 @@ static void __time_critical_func(restart_pio_sm)(void) {
     pio_sm_clear_fifos(psx_device_pio, smCmdReader);
     pio_sm_drain_tx_fifo(psx_device_pio, smDatWriter);
 
+    if (poll_mode)
+        goto enable_sm;
     multicore_reset_core1();
     if (core1_function)
         core1_function();
+enable_sm:
     pio_enable_sm_mask_in_sync(psx_device_pio, (1u << smCmdReader) | (1u << smDatWriter));
 }
 
+#if !PSX_DEVICE_POLLED_SEL
+/* Shared handler: IO_IRQ_BANK0 is used by CYW43/GPIO elsewhere; only run when our pin triggered. */
 static void __time_critical_func(sel_isr_callback)(void) {
+    uint32_t word = io_bank0_hw->intr[PIN_SEL / 8];
+    uint32_t shift = 4u * (PIN_SEL % 8);
+    if (!((word >> shift) & 0xFu))
+        return;
     gpio_acknowledge_irq(PIN_SEL, GPIO_IRQ_EDGE_RISE);
     restart_pio_sm();
 }
+#endif
 
 static void init_pio(void) {
     gpio_set_dir(PIN_DAT, false);
@@ -392,6 +412,32 @@ static void init_pio(void) {
     dat_writer_program_init(psx_device_pio, smDatWriter, offsetDatWriter);
 }
 
+void psx_device_set_poll_mode(bool enable) {
+    poll_mode = enable;
+}
+
+/* One iteration of the protocol when in poll mode (Core0-driven, e.g. Pico W with BT on Core1). Return 1 if a poll was processed. */
+int psx_device_poll(void) {
+    static bool controller_inited = false;
+#if PSX_DEVICE_POLLED_SEL
+    static bool last_sel_high = false;
+    bool sel_high = gpio_get(PIN_SEL);
+    if (sel_high && !last_sel_high)
+        restart_pio_sm();
+    last_sel_high = sel_high;
+#endif
+    if (!controller_inited) {
+        initController();
+        controller_inited = true;
+    }
+    if (pio_sm_get_rx_fifo_level(psx_device_pio, smCmdReader) == 0)
+        return 0;
+    uint8_t cmd = (uint8_t)(pio_sm_get(psx_device_pio, smCmdReader) >> 24);
+    if (cmd == 0x01)
+        process_joy_req();
+    return 1;
+}
+
 void psx_device_init(unsigned pio, PSXInputState *data, void (*reset_pio)(void)) {
     psx_device_pio = pio ? pio1 : pio0;
     inputState = data;
@@ -402,7 +448,9 @@ void psx_device_init(unsigned pio, PSXInputState *data, void (*reset_pio)(void))
     gpio_set_slew_rate(PIN_DAT, GPIO_SLEW_RATE_FAST);
     gpio_set_drive_strength(PIN_DAT, GPIO_DRIVE_STRENGTH_12MA);
 
+#if !PSX_DEVICE_POLLED_SEL
     gpio_set_irq_enabled(PIN_SEL, GPIO_IRQ_EDGE_RISE, true);
-    irq_set_exclusive_handler(IO_IRQ_BANK0, sel_isr_callback);
+    irq_add_shared_handler(IO_IRQ_BANK0, sel_isr_callback, 0u);
     irq_set_enabled(IO_IRQ_BANK0, true);
+#endif
 }

@@ -10,6 +10,7 @@
 #include <pico/stdlib.h>
 #include <pico/multicore.h>
 #include <pico/sync.h>
+#include <pico/flash.h>
 #include <cstring>
 
 static bool s_core1_device_mode = false;
@@ -97,6 +98,7 @@ void DreamcastDevice::process(const uint8_t idx, Gamepad& gamepad) {
 }
 
 void dreamcast_core1_entry(void) {
+    flash_safe_execute_core_init();  // allow Core0 to perform flash operations (e.g. UserSettings)
     if (!s_core1_device_mode) {
         while (true) sleep_ms(1);
         return;

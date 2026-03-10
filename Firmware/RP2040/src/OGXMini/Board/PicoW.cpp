@@ -150,9 +150,13 @@ void core1_task_wii_usb_host() {
 #endif
 
 void core1_task() {
+    OGXM_LOG("PicoW Core1: entry\n");
     board_api::init_bluetooth();
+    OGXM_LOG("PicoW Core1: init_bluetooth done\n");
     board_api::set_led(true);
+    OGXM_LOG("PicoW Core1: set_led(true) done\n");
     BLEServer::init_server(_gamepads);
+    OGXM_LOG("PicoW Core1: BLEServer init done, entering run_task\n");
     bluepad32::run_task(_gamepads);
 }
 
@@ -216,24 +220,19 @@ void pico_w::run() {
     } else
 #endif
     if (gpio_device_mode) {
-        OGXM_LOG("PicoW run: GPIO device mode (PS1/PS2 or GameCube), Core1 = protocol, Core0 = BT\n");
+        /* PS1PS2 on Pico W: run BT on Core1 (same as normal path) so LED and pairing work; drive PS2 protocol from Core0 main loop via psx_device_poll(). */
+        const bool ps2_poll_mode = (current_driver == DeviceDriverType::PS1PS2);
+        if (ps2_poll_mode) {
+            psx_device_set_poll_mode(true);
+            OGXM_LOG("PicoW run: PS2 poll mode set\n");
+        }
+        OGXM_LOG("PicoW run: GPIO device mode, Core1 = BT (PS2 poll on Core0)\n");
         HostInputSource input_src = user_settings.get_input_source();
-        if (current_driver == DeviceDriverType::DREAMCAST) {
-            dreamcast_set_core1_device_mode(input_src != HostInputSource::DREAMCAST_GPIO);
-        }
-        if (current_driver == DeviceDriverType::PS1PS2) {
-            multicore_launch_core1(psx_device_main);
-        } else if (current_driver == DeviceDriverType::GAMECUBE) {
-            multicore_launch_core1(gamecube_core1_entry);
-        } else if (current_driver == DeviceDriverType::N64) {
-            multicore_launch_core1(n64_core1_entry);
-        } else {
-            multicore_launch_core1(dreamcast_core1_entry);
-        }
         s_gpio_device_driver = device_driver;
         if (input_src == HostInputSource::PSX_GPIO) {
             GPIOHost::psx_host_init(0, 20, 19);
-        } else if (input_src == HostInputSource::GAMECUBE_GPIO) {
+        } else if (input_src == HostInputSource::GAMECUBE_GPIO && current_driver != DeviceDriverType::GAMECUBE) {
+            /* Skip joybus host when in GameCube device mode: Core1 uses GPIO 19 for console output. */
             GPIOHost::joybus_host_init(0, 19);
         } else if (input_src == HostInputSource::DREAMCAST_GPIO) {
             GPIOHost::dreamcast_host_init(1, 0, 10, -1);
@@ -241,10 +240,30 @@ void pico_w::run() {
             GPIOHost::n64_host_init(0, 19);
         }
         bluepad32::set_gpio_device_process_callback(gpio_device_process_cb, nullptr);
-        board_api::init_bluetooth();
-        board_api::set_led(true);
-        BLEServer::init_server(_gamepads);
-        bluepad32::run_task(_gamepads);  // never returns: BT run loop + process timer
+        if (ps2_poll_mode) {
+            /* PS2: init BT/LED/BLEServer only on Core1 to avoid CYW43 gpio_add_raw_irq_handler conflict (double-init assert). */
+            OGXM_LOG("PicoW run: launching Core1 (BT inited there), no Core0 BT init\n");
+            multicore_launch_core1(core1_task);  /* BT on Core1; Core0 main loop will call psx_device_poll() */
+        } else {
+            OGXM_LOG("PicoW run: Core0 calling init_bluetooth/set_led/BLEServer\n");
+            board_api::init_bluetooth();
+            board_api::set_led(true);
+            BLEServer::init_server(_gamepads);
+            OGXM_LOG("PicoW run: Core0 BT/LED/BLEServer done, launching Core1\n");
+            if (current_driver == DeviceDriverType::DREAMCAST) {
+                dreamcast_set_core1_device_mode(input_src != HostInputSource::DREAMCAST_GPIO);
+            }
+            if (current_driver == DeviceDriverType::GAMECUBE) {
+                multicore_launch_core1(gamecube_core1_entry);
+            } else if (current_driver == DeviceDriverType::N64) {
+                multicore_launch_core1(n64_core1_entry);
+            } else {
+                multicore_launch_core1(dreamcast_core1_entry);
+            }
+            /* Let Core1 reach flash_safe_execute_core_init() before we enter run_task (BT stack may touch flash). */
+            sleep_ms(100);
+            bluepad32::run_task(_gamepads);  /* never returns */
+        }
     } else {
         tud_init(BOARD_TUD_RHPORT);
         OGXM_LOG("PicoW run: tud_init done, launching Core1 (BT)\n");
@@ -272,17 +291,23 @@ void pico_w::run() {
     while (true) {
         TaskQueue::Core0::process_tasks();
         if (!wii_mode) {
-            tud_task();
+            if (!gpio_device_mode)
+                tud_task();
             HostInputSource input_src = UserSettings::get_instance().get_input_source();
             if (input_src == HostInputSource::PSX_GPIO) {
                 GPIOHost::psx_host_poll(_gamepads[0]);
-            } else if (input_src == HostInputSource::GAMECUBE_GPIO) {
+            } else if (input_src == HostInputSource::GAMECUBE_GPIO && UserSettings::get_instance().get_current_driver() != DeviceDriverType::GAMECUBE) {
                 GPIOHost::joybus_host_poll(_gamepads[0]);
             } else if (input_src == HostInputSource::DREAMCAST_GPIO) {
                 GPIOHost::dreamcast_host_poll(_gamepads[0]);
             } else if (input_src == HostInputSource::N64_GPIO) {
                 GPIOHost::n64_host_poll(_gamepads[0]);
             }
+        }
+        if (gpio_device_mode && current_driver == DeviceDriverType::PS1PS2) {
+            psx_device_poll();
+            if (loop_count != 0 && (loop_count % 10000u) == 0)
+                OGXM_LOG("PicoW run: main loop psx_device_poll tick " + std::to_string(loop_count) + "\n");
         }
         for (uint8_t i = 0; i < MAX_GAMEPADS; ++i) {
             device_driver->process(i, _gamepads[i]);

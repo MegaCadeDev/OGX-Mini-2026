@@ -17,3 +17,6 @@ Tools/dvd-dongle-rom.bin
 # Local docs (not for GitHub)
 Firmware/RP2040/docs/XInput_joypad-os_comparison.md
 Firmware/RP2040/docs/BLUEPAD32_PS4_PS5_PARSING.md
+docs/Input_Controllers_Research.md
+docs/Other_Projects_Output_Modes.md
+docs/Wired_Retro_Controllers.md

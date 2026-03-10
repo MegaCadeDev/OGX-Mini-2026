@@ -1,4 +1,5 @@
 #include <cstring>
+#include "pico/flash.h"
 #include "USBDevice/DeviceDriver/GameCube/GameCube.h"
 #include "USBDevice/DeviceDriver/GameCube/gc_simulator.h"
 
@@ -9,6 +10,9 @@
 static GCReport* s_gc_report = nullptr;
 
 void gamecube_core1_entry(void) {
+    flash_safe_execute_core_init();  // allow Core0 to perform flash operations (e.g. UserSettings)
+    if (s_gc_report == nullptr)
+        return;  // driver not initialized; avoid null deref in gc_device_main
     gc_device_main(0, s_gc_report, GAMECUBE_DATA_PIN);
 }
 

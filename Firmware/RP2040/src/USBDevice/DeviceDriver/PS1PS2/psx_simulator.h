@@ -32,6 +32,12 @@ void psx_device_init(unsigned pio, PSXInputState* data, void (*reset_pio)(void))
 /* Entry for core1: run this in an infinite loop. Blocks. */
 void psx_device_main(void);
 
+/* When enabled, SEL IRQ only restarts PIO (no Core1 reset). Use with psx_device_poll() on Core0 (e.g. Pico W: BT on Core1, PS2 on Core0). */
+void psx_device_set_poll_mode(bool enable);
+
+/* One poll iteration; call from Core0 main loop when in poll mode. Returns 1 if a command was processed. */
+int psx_device_poll(void);
+
 #ifdef __cplusplus
 }
 #endif

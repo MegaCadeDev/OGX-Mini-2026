@@ -1,6 +1,7 @@
 /* N64 controller output (device). Any USB/BT gamepad -> adapter -> N64 console. Ported from pdaxrom/usb2n64-adapter. */
 
 #include <cstring>
+#include "pico/flash.h"
 #include "USBDevice/DeviceDriver/N64/N64.h"
 #include "Gamepad/Gamepad.h"
 
@@ -9,6 +10,7 @@
 #endif
 
 void n64_core1_entry(void) {
+    flash_safe_execute_core_init();  // allow Core0 to perform flash operations (e.g. UserSettings)
     n64_device_main(N64_DATA_PIN);
 }
 

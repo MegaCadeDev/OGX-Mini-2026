@@ -80,7 +80,8 @@ struct ComboMap {
     DeviceDriverType driver; 
 };
 
-static constexpr std::array<ComboMap, 14> BUTTON_COMBO_MAP = {{
+// GAMECUBE and N64 are build-only (fixed driver), not in combo map; use -DOGXM_FIXED_DRIVER=GAMECUBE or N64.
+static constexpr std::array<ComboMap, 12> BUTTON_COMBO_MAP = {{
     { ButtonCombo::XBOXOG,    DeviceDriverType::XBOXOG    },
     { ButtonCombo::XBOXOG_SB, DeviceDriverType::XBOXOG_SB },
     { ButtonCombo::XBOXOG_XR, DeviceDriverType::XBOXOG_XR },
@@ -92,9 +93,7 @@ static constexpr std::array<ComboMap, 14> BUTTON_COMBO_MAP = {{
     { ButtonCombo::PS3,       DeviceDriverType::PS3       },
     { ButtonCombo::PSCLASSIC, DeviceDriverType::PSCLASSIC },
     { ButtonCombo::PS1PS2,    DeviceDriverType::PS1PS2    },
-    { ButtonCombo::GAMECUBE,  DeviceDriverType::GAMECUBE  },
     { ButtonCombo::DREAMCAST, DeviceDriverType::DREAMCAST },
-    { ButtonCombo::N64,       DeviceDriverType::N64       }
 }};
 
 const std::string UserSettings::INIT_FLAG_KEY()

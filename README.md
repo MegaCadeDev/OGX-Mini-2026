@@ -3,7 +3,7 @@
 
 Firmware for the RP2040, capable of emulating gamepads for several game consoles. The firmware comes in many flavors, supported on the [Adafruit Feather USB Host board](https://www.adafruit.com/product/5723), Pi Pico, Pi Pico 2, Pi Pico W, Pi Pico 2 W, Waveshare RP2040-Zero, Waveshare RP2350-USB-A, Waveshare RP2350-Zero, Seeed Studio XIAO RP2040, RP2354, Pico/ESP32 hybrid, and a 4-Channel RP2040-Zero setup.
 
-[**Visit the web app here**](https://wiredopposite.github.io/OGX-Mini-WebApp/) to change your mappings and deadzone settings. To pair the OGX-Mini with the web app via USB, plug your controller in, then connect it to your PC, hold **Start + Left Bumper + Right Bumper** to enter web app mode. Click "Connect via USB" in the web app and select the OGX-Mini. You can also pair via Bluetooth, no extra steps are needed in that case. 
+[**Visit the web app here**](https://megacadedev.github.io/OGX-Mini-2026-WebApp/) to change your mappings and deadzone settings. To pair the OGX-Mini with the web app via USB, plug your controller in, then connect it to your PC, hold **Start + Left Bumper + Right Bumper** to enter web app mode. Click "Connect via USB" in the web app and select the OGX-Mini. You can also pair via Bluetooth, no extra steps are needed in that case. 
 
 [**Join the discord here!**](https://discord.gg/guaBh9JZQ)
 
@@ -18,10 +18,10 @@ Firmware for the RP2040, capable of emulating gamepads for several game consoles
 - **Wii (Wiimote)** — Pico W / Pico 2 W only; build with `-DOGXM_FIXED_DRIVER=WII`. See [Wii Mode Guide](Firmware/RP2040/docs/Wii_Mode_Guide.md).
 - **PlayStation 1 & 2** — GPIO output to console controller port (DualShock-style).
 - **Dreamcast** — GPIO output over Maple Bus to console controller port.
-- **GameCube / Wii (GameCube ports)** — GPIO output over single-wire JoyBus.
-- **Nintendo 64** — GPIO output over single-wire to controller port.
+- **GameCube / Wii (GameCube ports)** — GPIO output over single-wire JoyBus. **Build-only (no combo):** use `-DOGXM_FIXED_DRIVER=GAMECUBE`; see below.
+- **Nintendo 64** — GPIO output over single-wire to controller port. **Build-only (no combo):** use `-DOGXM_FIXED_DRIVER=N64`; see below.
 
-**RP2040 output modes:** **USB device:** XInput (Xbox 360 + XSM3), DInput, PS3, **Switch Pro** (Nintendo Switch Pro Controller emulation), Wii U, **Wii (Wiimote, build-option only)**, Xbox OG (Gamepad / Steel Battalion / XRemote), PS Classic, Web App. **GPIO (no USB device):** PS1/PS2, Dreamcast, GameCube, N64 — use any wired USB or (on Pico W / Pico 2 W) Bluetooth controller as input. On Pico 2 W, Bluetooth runs on Core1 and USB on Core0; you can build with a fixed mode or use button combos to switch at runtime (Start + D-pad held ~3 s). **Wii is not in the combo list** — use a Wii-only build to get Wiimote output.
+**RP2040 output modes:** **USB device:** XInput (Xbox 360 + XSM3), DInput, PS3, **Switch Pro** (Nintendo Switch Pro Controller emulation), Wii U, **Wii (Wiimote, build-option only)**, Xbox OG (Gamepad / Steel Battalion / XRemote), PS Classic, Web App. **GPIO (no USB device):** PS1/PS2, Dreamcast, GameCube, N64 — use any wired USB or (on Pico W / Pico 2 W) Bluetooth controller as input. **Wii, GameCube, and N64 are not in the combo list** — use a dedicated build for those modes (see below).
 
 ## Changing platforms
 By default the OGX-Mini will emulate an OG Xbox controller, you must hold a button combo for 3 seconds to change which platform you want to play on. Your chosen mode will persist after powering off the device. 
@@ -44,18 +44,22 @@ Start = Plus (Switch) = Options (Dualsense/DS4)
     - Start + A (Cross for PlayStation and B for Switch gamepads)
 - PlayStation 1 / PlayStation 2 (GPIO output)
     - Start + B
-- GameCube / Wii GameCube ports (GPIO output)
-    - Start + X
 - Dreamcast (GPIO output)
     - Start + Y
 - Wii U (GameCube Adapter)
       - Start + Left Bumper + D-Pad Down
-- N64 (GPIO output)
-    - Start + Right Bumper
 - Web Application Mode
     - Start + Left Bumper + Right Bumper
 
-**Wii (Wiimote)** is not selectable by combo. Build with `-DOGXM_FIXED_DRIVER=WII` for a Wii-only firmware; see [Wii Mode Guide](Firmware/RP2040/docs/Wii_Mode_Guide.md).
+**Wii, GameCube, and N64 are not selectable by combo.** Use a dedicated build for those modes:
+
+- **Wii (Wiimote):** `-DOGXM_FIXED_DRIVER=WII`. See [Wii Mode Guide](Firmware/RP2040/docs/Wii_Mode_Guide.md).
+- **GameCube (GPIO):** `-DOGXM_FIXED_DRIVER=GAMECUBE`. Example (Pico 2 W Debug):  
+  `cmake -DOGXM_BOARD=PI_PICO2W -DCMAKE_BUILD_TYPE=Debug -DOGXM_FIXED_DRIVER=GAMECUBE ..` then `ninja`. Flash `OGX-Mini-*-GAMECUBE.uf2`. Use `PI_PICOW` for Pico W.
+- **N64 (GPIO):** `-DOGXM_FIXED_DRIVER=N64`. Example (Pico 2 W Debug):  
+  `cmake -DOGXM_BOARD=PI_PICO2W -DCMAKE_BUILD_TYPE=Debug -DOGXM_FIXED_DRIVER=N64 ..` then `ninja`. Flash `OGX-Mini-*-N64.uf2`.
+
+Input for GPIO modes is Bluetooth or USB; no combo switching in these builds.
 
 After a new mode is stored, the RP2040 will reset itself so you don't need to unplug it.
 

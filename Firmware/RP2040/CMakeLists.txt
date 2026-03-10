@@ -227,11 +227,11 @@ else()
 endif()
 
 # Optional: default or lock USB output mode.
-# OGXM_FIXED_DRIVER = one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP.
+# OGXM_FIXED_DRIVER = one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP, PS1PS2, GAMECUBE, DREAMCAST, N64.
 #   Empty = use first valid driver as default, combos enabled.
 #   Set = use that mode as default (first boot / NVS init). If OGXM_FIXED_DRIVER_ALLOW_COMBOS=OFF (default):
 #     combos disabled, mode locked. If OGXM_FIXED_DRIVER_ALLOW_COMBOS=ON: default is this mode, combos still work.
-set(OGXM_FIXED_DRIVER "" CACHE STRING "Default/lock output mode. One of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP. Empty = combos enabled.")
+set(OGXM_FIXED_DRIVER "" CACHE STRING "Default/lock output mode. One of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP, PS1PS2, GAMECUBE, DREAMCAST, N64. Empty = combos enabled.")
 set(OGXM_FIXED_DRIVER_ALLOW_COMBOS OFF CACHE BOOL "If OGXM_FIXED_DRIVER is set: ON = use it as default but allow combos to change mode; OFF = lock to that mode, combos disabled.")
 if(OGXM_FIXED_DRIVER)
     add_compile_definitions(CONFIG_OGXM_FIXED_DRIVER=1)
@@ -259,10 +259,18 @@ if(OGXM_FIXED_DRIVER)
         add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=9)
     elseif(OGXM_FIXED_DRIVER STREQUAL "WII")
         add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=10)
+    elseif(OGXM_FIXED_DRIVER STREQUAL "PS1PS2")
+        add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=11)
+    elseif(OGXM_FIXED_DRIVER STREQUAL "GAMECUBE")
+        add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=12)
+    elseif(OGXM_FIXED_DRIVER STREQUAL "DREAMCAST")
+        add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=13)
+    elseif(OGXM_FIXED_DRIVER STREQUAL "N64")
+        add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=14)
     elseif(OGXM_FIXED_DRIVER STREQUAL "WEBAPP")
         add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=100)
     else()
-        message(FATAL_ERROR "OGXM_FIXED_DRIVER must be one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP")
+        message(FATAL_ERROR "OGXM_FIXED_DRIVER must be one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP, PS1PS2, GAMECUBE, DREAMCAST, N64")
     endif()
     if(OGXM_FIXED_DRIVER STREQUAL "WII")
         message(STATUS "Wii-only build: ${OGXM_FIXED_DRIVER} (combos disabled, build option only)")

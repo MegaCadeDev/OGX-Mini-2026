@@ -106,6 +106,15 @@ Same goal as Switch Pro and PS3: the only added latency when using a wireless co
 
 Both modes: no `new_pad_in()` gate; main loop runs with `MAIN_LOOP_DELAY_US=0` by default; `tud_task()` runs before `process()` so the endpoint is ready when we try to send.
 
+### Xbox OG (Duke) gamepad: report always fresh; send when ready (minimal latency)
+
+Same goal as XInput/PS3: reduce input delay when using e.g. a DualShock (DS3/DS4/DualSense) as input while outputting to Original Xbox.
+
+- **Every** `process()` call: read `get_pad_in()`, build `in_report_` (buttons, triggers, sticks, SYS hold logic), then call `tud_xid::send_report()` when `send_report_ready(0)`. No `new_pad_in()` gate. The XID layer’s `ep_in_buffer` (used for GET_REPORT and interrupt IN) is updated every loop so the console always sees the latest state.
+- **File:** `src/USBDevice/DeviceDriver/XboxOG/XboxOG_GP.cpp` — `process()` always builds and sends when ready; previously it only updated when `new_pad_in()`, which added one poll period or more of latency.
+
+**DualSense (PS5) input when outputting to OG Xbox:** The PS5 USB host no longer skips reports that are byte-identical to the previous one. Previously, “unchanged” reports did not call `set_pad_in()`, so with a polled output (OG Xbox) some transitions or sustained input could be dropped when the host loop was slower than the DualSense report rate. Every DualSense report is now pushed into the gamepad queue so the OG Xbox device always has the latest state. **File:** `src/USBHost/HostDriver/PS5/PS5.cpp` — removed the unchanged-report early return; every report is parsed and passed to `gamepad.set_pad_in()`.
+
 ### Main loop order: tud_task() before process()
 
 The main loop now calls **`tud_task()` before** `device_driver->process()`. That way the USB stack updates completion status of the previous IN transfer first; then `process()` sees the endpoint as ready and can send the next report immediately with the latest gamepad state. Reduces latency by up to one main-loop iteration (avoids sending only every other loop when the host polls frequently).

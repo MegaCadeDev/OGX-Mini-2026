@@ -34,12 +34,9 @@ void PS5Host::process_report(Gamepad& gamepad, uint8_t address, uint8_t instance
 {
     const PS5::InReport* in_report = reinterpret_cast<const PS5::InReport*>(report);
 
-    if (std::memcmp(&prev_in_report_.joystick_lx, &in_report->joystick_lx, sizeof(uint8_t) * 6) == 0 &&
-        std::memcmp(prev_in_report_.buttons, in_report->buttons, sizeof(in_report->buttons)) == 0)
-    {
-        tuh_hid_receive_report(address, instance);
-        return;
-    }
+    // Do not skip "unchanged" reports: polled outputs (e.g. OG Xbox) need every report so
+    // quick transitions and sustained input are not dropped when the host loop is slower
+    // than the DualSense report rate or when comparing only a subset of the report.
 
     Gamepad::PadIn gp_in;   
 
