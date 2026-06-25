@@ -106,8 +106,9 @@ static void pico_w_usb_sof_timer_stop() {
 /** Debounce any unplug hint (line / stack / idle) past USB bus reset glitches (10–50 ms). */
 constexpr int32_t USB_UNPLUG_DEBOUNCE_US = 60 * 1000;
 /** If D+/D− never read as SE0 under PIO, IN reports stop when the cable is pulled — detect unplug this way.
- *  Keep high enough that HID pads that only report on change are not mistaken for unplug. */
-constexpr uint32_t USB_UNPLUG_NO_INPUT_MS = 3000;
+ *  Keep high enough that HID pads that only report on change are not mistaken for unplug.
+ *  360 wireless receiver sends status even with no controller paired. */
+constexpr uint32_t USB_UNPLUG_NO_INPUT_MS = 10000;
 static bool s_usb_unplug_debounce_armed = false;
 static absolute_time_t s_usb_unplug_debounce_since;
 

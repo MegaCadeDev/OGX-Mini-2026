@@ -21,6 +21,14 @@
     #define MAX_GAMEPADS 1
 #endif
 
+/** TinyUSB XInput host instances. The 360 wireless USB receiver exposes 4 controller interfaces;
+ *  all 4 must be polled even when MAX_GAMEPADS is 1 so sync works on any RF slot. */
+#if MAX_GAMEPADS < 4
+    #define OGXM_TUH_XINPUT_INSTANCES 4
+#else
+    #define OGXM_TUH_XINPUT_INSTANCES MAX_GAMEPADS
+#endif
+
 /** Main loop delay (device/core0) in microseconds. 0 = low latency (default). 250+ = lower CPU. */
 #ifndef MAIN_LOOP_DELAY_US
     #define MAIN_LOOP_DELAY_US 0

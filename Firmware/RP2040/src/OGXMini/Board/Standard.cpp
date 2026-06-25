@@ -4,6 +4,7 @@
 
 #include <pico/multicore.h>
 #include <pico/time.h>
+#include <atomic>
 
 #include "tusb.h"
 #include "bsp/board_api.h"
@@ -21,11 +22,86 @@
 #include "Gamepad/Gamepad.h"
 #include "UserSettings/UserSettings.h"
 #include "Board/board_api.h"
+#include "Board/board_api_private/board_api_private.h"
 #include "Board/ogxm_log.h"
 
 constexpr uint32_t FEEDBACK_DELAY_MS = 200;
 
 Gamepad _gamepads[MAX_GAMEPADS];
+
+static repeating_timer_t s_pio_usb_sof_timer;
+static bool s_pio_usb_sof_hw_timer = false;
+/** Set during intentional mode-change reboot so host_mounted(false) does not queue a second teardown. */
+static std::atomic<bool> s_driver_reboot_pending{false};
+
+static void pio_usb_sof_timer_stop() {
+    if (!s_pio_usb_sof_hw_timer) {
+        return;
+    }
+    cancel_repeating_timer(&s_pio_usb_sof_timer);
+    s_pio_usb_sof_hw_timer = false;
+}
+
+static bool pio_usb_sof_timer_cb(repeating_timer_t* rt) {
+    (void)rt;
+    pio_usb_host_frame();
+    return true;
+}
+
+static void pio_usb_sof_timer_start() {
+    if (s_pio_usb_sof_hw_timer) {
+        return;
+    }
+    if (add_repeating_timer_us(-1000, pio_usb_sof_timer_cb, nullptr, &s_pio_usb_sof_timer)) {
+        s_pio_usb_sof_hw_timer = true;
+    }
+}
+
+/** PIO USB has no hardware SOF; run pio_usb_host_frame() at ~1 kHz or IN/OUT transfers stall. */
+static void pio_usb_sof_service_due_frames() {
+    if (s_pio_usb_sof_hw_timer) {
+        return;
+    }
+    static absolute_time_t next_pio_frame;
+    static bool next_inited = false;
+    if (!next_inited) {
+        next_pio_frame = get_absolute_time();
+        next_inited = true;
+    }
+    absolute_time_t now = get_absolute_time();
+    while (absolute_time_diff_us(next_pio_frame, now) >= 0) {
+        pio_usb_host_frame();
+        next_pio_frame = delayed_by_us(next_pio_frame, 1000);
+        now = get_absolute_time();
+    }
+}
+
+static void configure_pio_usb_host() {
+    pio_usb_configuration_t pio_cfg = PIO_USB_CONFIG;
+    pio_cfg.skip_alarm_pool = true;
+    tuh_configure(BOARD_TUH_RHPORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
+}
+
+static void pio_usb_host_loop_tick() {
+    pio_usb_sof_service_due_frames();
+    tuh_task();
+}
+
+namespace board_api_usbh {
+
+void stop_pio_usb_host() {
+    pio_usb_sof_timer_stop();
+    multicore_reset_core1();
+    sleep_ms(50);
+    (void)tuh_deinit(BOARD_TUH_RHPORT);
+    for (int i = 0; i < 20; ++i) {
+        tuh_task();
+        sleep_ms(1);
+    }
+    enable_host_line_irq_monitoring();
+}
+
+} // namespace board_api_usbh
 
 void core1_task() {
     HostManager& host_manager = HostManager::get_instance();
@@ -37,10 +113,10 @@ void core1_task() {
         sleep_ms(100);
     }
 
-    pio_usb_configuration_t pio_cfg = PIO_USB_CONFIG;
-    tuh_configure(BOARD_TUH_RHPORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
-
+    configure_pio_usb_host();
+    board_api_usbh::suspend_line_irq();
     tuh_init(BOARD_TUH_RHPORT);
+    pio_usb_sof_timer_start();
 
     uint32_t tid_feedback = TaskQueue::Core1::get_new_task_id();
     TaskQueue::Core1::queue_delayed_task(tid_feedback, FEEDBACK_DELAY_MS, true,
@@ -49,6 +125,7 @@ void core1_task() {
     });
 
     while (true) {
+        pio_usb_sof_service_due_frames();
         TaskQueue::Core1::process_tasks();
         tuh_task();
     }
@@ -67,6 +144,7 @@ void set_gp_check_timer(uint32_t task_id) {
         // Check gamepad inputs for button combo to change usb device driver
         else if (user_settings.check_for_driver_change(_gamepads[0])) {
             OGXM_LOG("Driver change detected, storing new driver.\n");
+            s_driver_reboot_pending = true;
             user_settings.store_driver_type(user_settings.get_current_driver());
         }
     });
@@ -85,7 +163,7 @@ void standard::host_mounted(bool host_mounted) {
         return;
     }
 
-    if (!host_mounted && tud_is_inited.load()) {
+    if (!host_mounted && tud_is_inited.load() && !s_driver_reboot_pending.load()) {
         TaskQueue::Core0::queue_task([]() {
             OGXM_LOG("USB disconnected, rebooting.\n");
             board_api::usb::disconnect_all();
@@ -125,9 +203,10 @@ void standard::run() {
             sleep_ms(100);
         }
 
-        pio_usb_configuration_t pio_cfg = PIO_USB_CONFIG;
-        tuh_configure(BOARD_TUH_RHPORT, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
+        configure_pio_usb_host();
+        board_api_usbh::suspend_line_irq();
         tuh_init(BOARD_TUH_RHPORT);
+        pio_usb_sof_timer_start();
 
         uint32_t tid_feedback = TaskQueue::Core0::get_new_task_id();
         TaskQueue::Core0::queue_delayed_task(tid_feedback, FEEDBACK_DELAY_MS, true, [&host_manager]() {
@@ -194,7 +273,7 @@ void standard::run() {
     while (true) {
         TaskQueue::Core0::process_tasks();
         if (gpio_device_mode) {
-            tuh_task();
+            pio_usb_host_loop_tick();
             tud_task();
             HostInputSource input_src = UserSettings::get_instance().get_input_source();
             if (input_src == HostInputSource::PSX_GPIO) {

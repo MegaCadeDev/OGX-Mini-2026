@@ -39,6 +39,9 @@ void enable_host_line_irq_monitoring() {
     host_pin_isr(0, 0);
 }
 
+void stop_pio_usb_host() __attribute__((weak));
+void stop_pio_usb_host() {}
+
 void init() {
 #if defined(VCC_EN_PIN)
     gpio_init(VCC_EN_PIN);

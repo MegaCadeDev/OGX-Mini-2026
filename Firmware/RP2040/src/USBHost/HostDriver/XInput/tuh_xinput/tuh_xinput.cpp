@@ -113,16 +113,25 @@ static void std_sleep_ms(uint32_t ms)
     }
 }
 
-static void wait_for_tx_complete(uint8_t dev_addr, uint8_t ep_addr)
+static void wait_for_tx_complete(uint8_t dev_addr, uint8_t ep_addr, uint32_t timeout_ms = 200)
 {
+    const auto start = std::chrono::high_resolution_clock::now();
     while (usbh_edpt_busy(dev_addr, ep_addr))
     {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::high_resolution_clock::now() - start).count();
+        if (static_cast<uint32_t>(elapsed) >= timeout_ms)
+        {
+            return;
+        }
 #if defined(CONFIG_EN_USB_HOST)
         pio_usb_host_frame();
 #endif
         tuh_task();
     }
 }
+
+static void prime_port_for_pairing(uint8_t dev_addr, uint8_t instance);
 
 bool send_ctrl_xfer(uint8_t dev_addr, const tusb_control_request_t* request, uint8_t* buffer, tuh_xfer_cb_t complete_cb, uintptr_t user_data)
 {
@@ -277,6 +286,12 @@ static bool set_config(uint8_t dev_addr, uint8_t itf_num)
         mount_cb(dev_addr, instance, interface);
     }
 
+    if (interface->dev_type == DevType::XBOX360W)
+    {
+        receive_report(dev_addr, instance);
+        prime_port_for_pairing(dev_addr, instance);
+    }
+
     usbh_driver_set_config_complete(dev_addr, interface->itf_num);
     return true;
 }
@@ -293,16 +308,22 @@ static bool xfer_cb(uint8_t dev_addr, uint8_t ep_addr, xfer_result_t result, uin
     {
         if (dir == TUSB_DIR_IN)
         {
-            report_received_cb(dev_addr, instance, interface->ep_in_buffer.data(), interface->ep_in_size);
+            receive_report(dev_addr, instance);
         }
         else if (report_sent_cb)
         {
             report_sent_cb(dev_addr, instance, interface->ep_out_buffer.data(), interface->ep_out_size);
         }
+        return true;
     }
 
     if (dir == TUSB_DIR_IN)
     {
+        if (host_activity_cb)
+        {
+            host_activity_cb(dev_addr, instance);
+        }
+
         bool new_pad_data = false;
         uint8_t* in_buffer = interface->ep_in_buffer.data();
 
@@ -317,15 +338,16 @@ static bool xfer_cb(uint8_t dev_addr, uint8_t ep_addr, xfer_result_t result, uin
             case DevType::XBOX360W:
                 if (in_buffer[0] & 0x08)
                 {
-                    if (in_buffer[1] != 0x00 && !interface->connected)
+                    /* Byte1 bit7 = controller present (0x80). Do not treat headset-only 0x40 as paired. */
+                    if ((in_buffer[1] & 0x80) && !interface->connected)
                     {
                         interface->connected = true;
 
                         TU_LOG1("Xbox 360 wireless controller connected\n");
 
-                        //I think some 3rd party adapters need this:
-                        std_sleep_ms(1000);
                         send_report(dev_addr, instance, Xbox360W::RUMBLE_ENABLE, sizeof(Xbox360W::RUMBLE_ENABLE));
+                        wait_for_tx_complete(dev_addr, interface->ep_out);
+                        set_led(dev_addr, instance, wireless_led_quadrant(dev_addr, instance), true);
 
                         if (xbox360w_connect_cb)
                         {
@@ -345,7 +367,9 @@ static bool xfer_cb(uint8_t dev_addr, uint8_t ep_addr, xfer_result_t result, uin
                         }
                     }
                 }
-                if ((in_buffer[1] & 1 && in_buffer[5] == 0x13) || (in_buffer[1] & 2))
+                if (((in_buffer[1] & 1) && xferred_bytes >= 18 &&
+                     (in_buffer[5] == 0x13 || in_buffer[5] == 0x14)) ||
+                    (in_buffer[1] & 2))
                 {
                     new_pad_data = true;
                 }
@@ -477,6 +501,40 @@ bool receive_report(uint8_t dev_addr, uint8_t instance)
     return true;
 }
 
+bool is_connected(uint8_t dev_addr, uint8_t instance)
+{
+    Interface* interface = get_itf_by_instance(dev_addr, instance);
+    return interface != nullptr && interface->connected;
+}
+
+uint8_t wireless_led_quadrant(uint8_t dev_addr, uint8_t instance)
+{
+    Interface* interface = get_itf_by_instance(dev_addr, instance);
+    if (interface == nullptr || interface->dev_type != DevType::XBOX360W)
+    {
+        return static_cast<uint8_t>(instance + 1);
+    }
+    /* Receiver USB layout: controller ports on interface numbers 0,2,4,6. */
+    return static_cast<uint8_t>((interface->itf_num / 2) + 1);
+}
+
+void service_wireless_ports(uint8_t dev_addr)
+{
+    Device* device = get_device_by_addr(dev_addr);
+    if (device == nullptr)
+    {
+        return;
+    }
+    for (uint8_t i = 0; i < device->interfaces.size(); ++i)
+    {
+        if (device->interfaces[i].dev_type == DevType::XBOX360W &&
+            device->interfaces[i].itf_num != INVALID_IDX)
+        {
+            prime_port_for_pairing(dev_addr, i);
+        }
+    }
+}
+
 bool set_led(uint8_t dev_addr, uint8_t instance, uint8_t quadrant, bool block)
 {
     Interface* interface = get_itf_by_instance(dev_addr, instance);
@@ -509,6 +567,23 @@ bool set_led(uint8_t dev_addr, uint8_t instance, uint8_t quadrant, bool block)
     return ret;
 }
 
+/** RUMBLE_ENABLE + player LED on an idle wireless port so sync can complete on any RF slot. */
+static void prime_port_for_pairing(uint8_t dev_addr, uint8_t instance)
+{
+    Interface* interface = get_itf_by_instance(dev_addr, instance);
+    if (interface == nullptr || interface->dev_type != DevType::XBOX360W ||
+        interface->connected || interface->itf_num == INVALID_IDX)
+    {
+        return;
+    }
+    if (usbh_edpt_busy(dev_addr, interface->ep_out))
+    {
+        return;
+    }
+    send_report(dev_addr, instance, Xbox360W::RUMBLE_ENABLE, sizeof(Xbox360W::RUMBLE_ENABLE));
+    set_led(dev_addr, instance, wireless_led_quadrant(dev_addr, instance), false);
+}
+
 bool set_rumble(uint8_t dev_addr, uint8_t instance, uint8_t rumble_l, uint8_t rumble_r, bool block)
 {
     Interface* interface = get_itf_by_instance(dev_addr, instance);
@@ -520,9 +595,10 @@ bool set_rumble(uint8_t dev_addr, uint8_t instance, uint8_t rumble_l, uint8_t ru
     switch (interface->dev_type)
     {
         case DevType::XBOX360W:
-            send_report(dev_addr, instance, Xbox360W::RUMBLE_ENABLE, sizeof(Xbox360W::RUMBLE_ENABLE));
-            wait_for_tx_complete(dev_addr, interface->ep_out);
-
+            if (!interface->connected)
+            {
+                return false;
+            }
             std::memcpy(buffer, Xbox360W::RUMBLE, sizeof(Xbox360W::RUMBLE));
             buffer[5] = rumble_l;
             buffer[6] = rumble_r;
@@ -567,7 +643,7 @@ void xbox360_chatpad_init(uint8_t address, uint8_t instance)
 {
     TU_LOG1("XInput Chatpad Init\r\n");
 
-    Interface* interface = get_itf_by_itf_num(address, instance);
+    Interface* interface = get_itf_by_instance(address, instance);
     TU_VERIFY(interface != nullptr && interface->connected, );
     TU_VERIFY(interface->dev_type == DevType::XBOX360W, ); //Only supported on Xbox 360 Wireless atm, wired is more complicated
 
@@ -591,7 +667,7 @@ void xbox360_chatpad_init(uint8_t address, uint8_t instance)
 
 bool xbox360_chatpad_keepalive(uint8_t address, uint8_t instance)
 {   
-    Interface* interface = get_itf_by_itf_num(address, instance);
+    Interface* interface = get_itf_by_instance(address, instance);
     TU_VERIFY(interface != nullptr, false);
     TU_VERIFY(interface->connected && interface->chatpad_inited, false);
 

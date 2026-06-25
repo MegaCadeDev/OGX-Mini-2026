@@ -11,7 +11,7 @@
 #include "Board/Config.h"
 #include "Board/board_api.h"
 #include "Board/ogxm_log.h"
-#if (OGXM_BOARD == PI_PICOW) && defined(CONFIG_EN_USB_HOST)
+#if defined(CONFIG_EN_USB_HOST)
 #include "pio_usb.h"
 #endif
 #include "UserSettings/UserSettings.h"
@@ -41,8 +41,9 @@
 #include "USBHost/HostDriver/HIDGeneric/HIDGeneric.h"
 
 /** Per USB device: TinyUSB HID instance indices and XInput instance indices are separate namespaces
- *  (both often start at 0). Reserve [0 .. MAX_GAMEPADS-1] for HID and [MAX_GAMEPADS .. 2*MAX-1] for XInput. */
-#define MAX_INTERFACES (MAX_GAMEPADS * 2)
+ *  (both often start at 0). Reserve [0 .. MAX_GAMEPADS-1] for HID and [MAX_GAMEPADS ..] for XInput.
+ *  OGXM_TUH_XINPUT_INSTANCES is 4 when MAX_GAMEPADS < 4 (360 wireless receiver). */
+#define MAX_INTERFACES (MAX_GAMEPADS + OGXM_TUH_XINPUT_INSTANCES)
 
 class HostManager 
 {
@@ -86,9 +87,26 @@ public:
 
 		Device& device_slot = device_slots_[dev_idx];
 
+		/* Xbox 360 wireless receiver: one HostManager driver, four tuh_xinput instances. */
+		if (driver_type == HostDriverType::XBOX360W && device_slot.address == address)
+		{
+			for (uint8_t i = 0; i < MAX_INTERFACES; ++i)
+			{
+				if (i == si)
+				{
+					continue;
+				}
+				const Interface& other = device_slot.interfaces[i];
+				if (other.driver && other.host_driver_type == HostDriverType::XBOX360W)
+				{
+					return true;
+				}
+			}
+		}
+
 		/* One physical pad on a composite that exposes both XInput and HID (e.g. some third-party
-		 * controllers): share gamepad index. Multiple XInput interfaces (Xbox 360 wireless dongle)
-		 * must each get their own slot — do not reuse across same class. */
+		 * controllers): share gamepad index. Xbox 360 wireless receiver: 4 XInput interfaces share
+		 * one gamepad when MAX_GAMEPADS is 1. */
 		uint8_t gp_idx = INVALID_IDX;
 		if (device_slot.address == address)
 		{
@@ -106,7 +124,10 @@ public:
 				const bool complementary =
 					(dclass == DriverClass::HID && other.driver_class == DriverClass::XINPUT) ||
 					(dclass == DriverClass::XINPUT && other.driver_class == DriverClass::HID);
-				if (complementary)
+				const bool xbox360w_sibling =
+					(driver_type == HostDriverType::XBOX360W &&
+					 other.host_driver_type == HostDriverType::XBOX360W);
+				if (complementary || xbox360w_sibling)
 				{
 					gp_idx = other.gamepad_idx;
 					break;
@@ -254,12 +275,32 @@ public:
 		}
 		for (auto& device_slot : device_slots_)
 		{
-			if (device_slot.address == address &&
-				device_slot.interfaces[si].driver &&
-				device_slot.interfaces[si].gamepad)
+			if (device_slot.address != address)
 			{
-				device_slot.interfaces[si].driver->process_report(*device_slot.interfaces[si].gamepad, address, instance, report, len);
+				continue;
 			}
+			HostDriver* driver = device_slot.interfaces[si].driver.get();
+			Gamepad* gamepad = device_slot.interfaces[si].gamepad;
+			if (!driver || !gamepad)
+			{
+				/* 360 wireless receiver: one HostManager driver serves all TinyUSB instances. */
+				for (const auto& iface : device_slot.interfaces)
+				{
+					if (iface.driver && iface.gamepad &&
+					    iface.driver_class == DriverClass::XINPUT &&
+					    iface.host_driver_type == HostDriverType::XBOX360W)
+					{
+						driver = iface.driver.get();
+						gamepad = iface.gamepad;
+						break;
+					}
+				}
+			}
+			if (driver && gamepad)
+			{
+				driver->process_report(*gamepad, address, instance, report, len);
+			}
+			break;
 		}
 	}
 
@@ -272,12 +313,31 @@ public:
 		}
 		for (auto& device_slot : device_slots_)
 		{
-			if (device_slot.address == address && 
-				device_slot.interfaces[si].driver &&
-				device_slot.interfaces[si].gamepad)
+			if (device_slot.address != address)
 			{
-				device_slot.interfaces[si].driver->connect_cb(*device_slot.interfaces[si].gamepad, address, instance);
+				continue;
 			}
+			HostDriver* driver = device_slot.interfaces[si].driver.get();
+			Gamepad* gamepad = device_slot.interfaces[si].gamepad;
+			if (!driver || !gamepad)
+			{
+				for (const auto& iface : device_slot.interfaces)
+				{
+					if (iface.driver && iface.gamepad &&
+					    iface.driver_class == DriverClass::XINPUT &&
+					    iface.host_driver_type == HostDriverType::XBOX360W)
+					{
+						driver = iface.driver.get();
+						gamepad = iface.gamepad;
+						break;
+					}
+				}
+			}
+			if (driver && gamepad)
+			{
+				driver->connect_cb(*gamepad, address, instance);
+			}
+			break;
 		}
 	}
 
@@ -290,12 +350,31 @@ public:
 		}
 		for (auto& device_slot : device_slots_)
 		{
-			if (device_slot.address == address && 
-				device_slot.interfaces[si].driver &&
-				device_slot.interfaces[si].gamepad)
+			if (device_slot.address != address)
 			{
-				device_slot.interfaces[si].driver->disconnect_cb(*device_slot.interfaces[si].gamepad, address, instance);
+				continue;
 			}
+			HostDriver* driver = device_slot.interfaces[si].driver.get();
+			Gamepad* gamepad = device_slot.interfaces[si].gamepad;
+			if (!driver || !gamepad)
+			{
+				for (const auto& iface : device_slot.interfaces)
+				{
+					if (iface.driver && iface.gamepad &&
+					    iface.driver_class == DriverClass::XINPUT &&
+					    iface.host_driver_type == HostDriverType::XBOX360W)
+					{
+						driver = iface.driver.get();
+						gamepad = iface.gamepad;
+						break;
+					}
+				}
+			}
+			if (driver && gamepad)
+			{
+				driver->disconnect_cb(*gamepad, address, instance);
+			}
+			break;
 		}
 	}
 
@@ -331,11 +410,23 @@ public:
 				{
 					continue;
 				}
+				if (iface.host_driver_type == HostDriverType::XBOX360W)
+				{
+					tuh_xinput::service_wireless_ports(device_slot.address);
+				}
 				/* PS4-only (no GIP): 200 ms OUT refresh is OK. Composite pads choke if we OUT at 200 ms —
 				 * use rare keepalive + init + console-driven updates only. */
 				const bool ps4_hid_periodic =
 					iface.driver_class == DriverClass::HID && iface.host_driver_type == HostDriverType::PS4 &&
 					!ps_style_hid;
+				/* PS3: invoke send_feedback on timer; driver rate-limits OUT to 1 Hz on PIO USB. */
+				const bool ps3_hid_periodic =
+					iface.driver_class == DriverClass::HID && iface.host_driver_type == HostDriverType::PS3;
+				/* Switch Pro / Pro 2: init steps and idle rumble keepalive need periodic OUT on PIO USB. */
+				const bool switch_pro_hid_periodic =
+					iface.driver_class == DriverClass::HID &&
+					(iface.host_driver_type == HostDriverType::SWITCH_PRO ||
+					 iface.host_driver_type == HostDriverType::SWITCH_PRO_2);
 				bool ps4_composite_keepalive = false;
 				if (ps_style_hid && iface.driver_class == DriverClass::HID &&
 				    iface.host_driver_type == HostDriverType::PS4 && iface.gamepad_idx < MAX_GAMEPADS)
@@ -348,7 +439,7 @@ public:
 					}
 				}
 				if (!(iface.gamepad->new_pad_out() || iface.gamepad->has_rumble() || ps4_hid_periodic ||
-				      ps4_composite_keepalive))
+				      ps3_hid_periodic || switch_pro_hid_periodic || ps4_composite_keepalive))
 				{
 					continue;
 				}
@@ -358,7 +449,7 @@ public:
 				}
 				iface.driver->send_feedback(*iface.gamepad, device_slot.address, iface.usb_instance);
 				tuh_task();
-#if (OGXM_BOARD == PI_PICOW) && defined(CONFIG_EN_USB_HOST)
+#if defined(CONFIG_EN_USB_HOST)
 				/* Nested tuh_task during OUT must not starve PIO USB SOF or wired IN dies in ~1–2 s. */
 				pio_usb_host_frame();
 #endif
@@ -381,6 +472,10 @@ public:
 			}
 			Interface& iface = device_slot.interfaces[si];
 			const uint8_t cleared_gamepad_idx = iface.gamepad_idx;
+			if (iface.driver && iface.gamepad)
+			{
+				iface.driver->disconnect_cb(*iface.gamepad, address, instance);
+			}
 			iface.driver.reset();
 			iface.driver_class = DriverClass::NONE;
 			iface.host_driver_type = HostDriverType::UNKNOWN;
@@ -452,12 +547,52 @@ public:
 		}
 		for (auto& device_slot : device_slots_)
 		{
-			if (device_slot.address == address)
+			if (device_slot.address != address)
+			{
+				continue;
+			}
+			if (device_slot.interfaces[si].gamepad_idx != INVALID_IDX)
 			{
 				return device_slot.interfaces[si].gamepad_idx;
 			}
+			for (const auto& iface : device_slot.interfaces)
+			{
+				if (iface.driver_class == DriverClass::XINPUT &&
+				    iface.host_driver_type == HostDriverType::XBOX360W &&
+				    iface.gamepad_idx != INVALID_IDX)
+				{
+					return iface.gamepad_idx;
+				}
+			}
+			break;
 		}
 		return INVALID_IDX;
+	}
+
+	/** Live Switch Pro / Switch 2 Pro host driver for async bulk bring-up callbacks. */
+	inline SwitchProHost* get_switch_pro_host(uint8_t address, uint8_t instance) const
+	{
+		const uint8_t si = host_storage_index(DriverClass::HID, instance);
+		if (si >= MAX_INTERFACES)
+		{
+			return nullptr;
+		}
+		for (const auto& device_slot : device_slots_)
+		{
+			if (device_slot.address != address)
+			{
+				continue;
+			}
+			const Interface& iface = device_slot.interfaces[si];
+			if (!iface.driver ||
+			    (iface.host_driver_type != HostDriverType::SWITCH_PRO &&
+			     iface.host_driver_type != HostDriverType::SWITCH_PRO_2))
+			{
+				return nullptr;
+			}
+			return static_cast<SwitchProHost*>(iface.driver.get());
+		}
+		return nullptr;
 	}
 
 	inline bool any_mounted() 
@@ -505,12 +640,19 @@ private:
 
 	static inline uint8_t host_storage_index(DriverClass cls, uint8_t tinusb_instance)
 	{
+		if (cls == DriverClass::XINPUT)
+		{
+			if (tinusb_instance >= OGXM_TUH_XINPUT_INSTANCES)
+			{
+				return INVALID_IDX;
+			}
+			return static_cast<uint8_t>(MAX_GAMEPADS + tinusb_instance);
+		}
 		if (tinusb_instance >= MAX_GAMEPADS)
 		{
 			return INVALID_IDX;
 		}
-		const uint8_t off = (cls == DriverClass::XINPUT) ? MAX_GAMEPADS : 0;
-		return static_cast<uint8_t>(tinusb_instance + off);
+		return tinusb_instance;
 	}
 
 	struct Interface

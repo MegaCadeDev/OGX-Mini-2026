@@ -36,15 +36,9 @@ const uint8_t* switch2_payload(const uint8_t* report, uint16_t len, uint16_t& ou
 void Switch2ProHost::process_report(Gamepad& gamepad, uint8_t address, uint8_t instance, const uint8_t* report,
                                     uint16_t len)
 {
-    if (switch2_bringup_active_)
+    if (switch2_bringup_active_ || init_state_ != InitState::DONE)
     {
-        tuh_hid_receive_report(address, instance);
-        return;
-    }
-
-    if (init_state_ != InitState::DONE)
-    {
-        init_switch_host(gamepad, address, instance);
+        SwitchProHost::process_report(gamepad, address, instance, report, len);
         return;
     }
 

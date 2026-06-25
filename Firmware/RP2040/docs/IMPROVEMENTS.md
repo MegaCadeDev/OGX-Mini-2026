@@ -2,7 +2,7 @@
 
 Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 
-**Version:** From **v1.0.0a3** the version was bumped to **v1.0.0a4** to reflect Wii U controller fixes, Gamecube USB mode, PS3 driver fixes, latency improvements, and Xbox 360 (XInput) support (see below). **v1.0.0.8a+** documents **Pico W / Pico 2 W** work on **DualShock 4 (Classic Bluetooth)** vs **BLE advertising**, **BR inquiry**, and related BT stability (see *Pico W / Pico 2 W — DualShock 4 and Classic Bluetooth* below). **v1.0.0.10a** adds **Nintendo Switch 2** wireless support (**Pro 2** and **Joy-Con 2**) over **BLE**, **Switch 1 Joy-Con L+R merge**, and **Joy-Con dual-half latency fixes** (see *Nintendo Switch 2 — Bluetooth* and *Joy-Con pair merge — latency* below).
+**Version:** From **v1.0.0a3** the version was bumped to **v1.0.0a4** to reflect Wii U controller fixes, Gamecube USB mode, PS3 driver fixes, latency improvements, and Xbox 360 (XInput) support (see below). **v1.0.0.8a+** documents **Pico W / Pico 2 W** work on **DualShock 4 (Classic Bluetooth)** vs **BLE advertising**, **BR inquiry**, and related BT stability (see *Pico W / Pico 2 W — DualShock 4 and Classic Bluetooth* below). **v1.0.0.10a** adds **Nintendo Switch 2** wireless support (**Pro 2** and **Joy-Con 2**) over **BLE**, **Switch 1 Joy-Con L+R merge**, and **Joy-Con dual-half latency fixes** (see *Nintendo Switch 2 — Bluetooth* and *Joy-Con pair merge — latency* below). **v1.0.0.11a** adds **PIO USB host wired connection fixes** — **Switch 1/2 Pro**, **DualShock 3**, and **Xbox 360 wireless receiver** — validated on **Waveshare RP2350-USB-A** (see *PIO USB host — wired connection fixes* below).
 
 **Version 1.0.0.9a — documented here for release notes:**
 
@@ -99,6 +99,115 @@ Switch 2 controllers use a **proprietary BLE GATT protocol**, not standard HID-o
 **Files:** `uni_hid_parser_switch.c`, `uni_hid_parser_switch2.c`, `uni_hid_parser_switch2.h`, `src/Gamepad/Gamepad.h`, `src/Bluepad32/Bluepad32.cpp`.
 
 **User impact:** Paired Joy-Cons (Switch 1 or Switch 2) should feel as responsive when using **both** halves simultaneously as when using one half alone. Pairing flow unchanged: **Left first**, then **Right** (SYNC on the partner while left stays connected).
+
+---
+
+## PIO USB host — wired connection fixes (Waveshare RP2350-USB-A)
+
+**Primary test platform:** **Waveshare RP2350-USB-A** (`OGXM_BOARD=RP2350_USB_A`, build option **7** in `scripts/build.sh`). Firmware uses the **Standard** path: **Core1** runs **`tuh_task()`** plus a **1 ms SOF timer** for PIO USB host.
+
+**Scope:** Changes live in **shared USB host drivers** and **`HostManager`**, not board-specific `#ifdef`s. Any build with **`CONFIG_EN_USB_HOST`** (Pico, Feather, RP2350-Zero, RP2350-USB-A, etc.) gets the same wired-host behavior. **Pico W / Pico 2 W Bluetooth** (Bluepad32) is **unchanged**.
+
+**Goal:** Reliable **wired USB host** input on PIO USB adapters for **Switch Pro 1/2**, **DualShock 3**, and the **Xbox 360 wireless PC receiver** + pad — without starving the PIO stack during init or OUT transfers.
+
+### Shared — HostManager and PIO USB servicing
+
+1. **`pio_usb_host_frame()` on all PIO USB host boards** — Previously gated to **Pico W only**; now runs after **`send_feedback()`** / nested **`tuh_task()`** on **every** `CONFIG_EN_USB_HOST` build so wired IN reports do not die after ~1–2 s when the host sends OUT.
+2. **Periodic feedback for init-heavy HID drivers** — **`HostManager::send_feedback()`** now always invokes **`send_feedback()`** for **PS3** and **Switch Pro / Switch 2 Pro** (not only on rumble / `new_pad_out()`), so wired init steps and keepalives run on a timer.
+3. **`disconnect_cb()` on unmount** — Drivers get a clean teardown hook when a device is removed (bulk cancel for Switch 2, state reset for 360 wireless, etc.).
+4. **XInput instance storage** — **`MAX_INTERFACES = MAX_GAMEPADS + OGXM_TUH_XINPUT_INSTANCES`**; **`OGXM_TUH_XINPUT_INSTANCES = 4`** when `MAX_GAMEPADS < 4` so the **360 wireless receiver’s four ports** each have a TinyUSB slot even on single-player builds.
+
+**Files:** `HostManager.h`, `Board/Config.h`.
+
+### Nintendo Switch Pro — wired USB
+
+**References:**
+
+| Project | Contribution |
+|---------|----------------|
+| **[Chromium `device/gamepad`](https://chromium.googlesource.com/chromium/src/+/main/device/gamepad/)** | **Switch 1 Pro wired USB** init: report **0x80** subcommands (MAC, handshake, baud, disable timeout), **0x81** ack handling, **0x12** output + subcommands for LED / mode / IMU. |
+| **`Tools/controller_capture/switch2_usb_init.py`** (this repo) | Captured **Switch 2–family bulk OUT** packet sequence used on PC before HID reports work. |
+| **[HandHeldLegend/procon2tool](https://github.com/HandHeldLegend/procon2tool)** | **ProCon 2 enabler** — same bulk bring-up pattern as the capture tool; cross-check for **17-packet** interface **1** sequence. |
+| **Bluepad32 `uni_hid_parser_switch.c`** | **Switch 1** button bit layout (`Buttons0/1/2`) for wired report decode validation. |
+| **`Switch2ProHost.cpp`** (v1.0.0.9a) | **Switch 2 Pro wired** digitals from report **0x09** — extended here with bulk-only bring-up (no post-bulk Switch 1 init). |
+
+### Switch 1 Pro (PID 0x2009) — wired USB init
+
+1. **Wired USB state machine** — `InitState` phases: **USB_MAC** → **USB_HANDSHAKE1** → **USB_BAUD** → **USB_HANDSHAKE2** → **USB_NO_TIMEOUT** → **LED** → **LED_HOME** → **FULL_REPORT** → **IMU** → **DONE**.
+2. **0x80 path** — OUT on report ID **`SwitchPro::REPORT_ID_USB_OUT` (0x80)** with subcommands **`USB_SUB_MAC`**, **`USB_SUB_HANDSHAKE`**, **`USB_SUB_BAUD`**, **`USB_SUB_DISABLE_TIMEOUT` (0x04)**; advance on matching **0x81** IN ack bytes.
+3. **0x12 + 0x33 probe** — After disable-timeout, send **`CMD::AND_RUMBLE` (0x12)** with subcommand **`USB_PROBE` (0x33)**; on **0x21** subcommand ack, continue to player LED and **full report mode** subcommands.
+4. **PIO-friendly OUT** — **`try_hid_out_id()`** checks **`tuh_hid_send_ready()`**; **`send_feedback()`** calls **`pio_usb_host_frame()`** + **`tuh_task()`** during init so Core1 keeps the PIO host alive.
+5. **Per-IN advancement** — Init steps also run from **`process_report()`** on each IN packet, not only from the feedback timer.
+6. **Timeout fallback** — If **USB_NO_TIMEOUT** ack is slow, **8 retries** in **`send_feedback()`** force advance to **LED** so init does not hang indefinitely.
+7. **Input mapping fixes** — D-pad **UP↔DOWN** and **LEFT↔RIGHT** swapped; **L3↔R3** swapped in **`SwitchProHost::process_report()`**.
+
+### Switch 2 Pro (PID 0x2069) and Switch 2–family USB — bulk bring-up
+
+Applies to Nintendo VID **0x057E** PIDs **0x2066**, **0x2067**, **0x2069**, **0x2073** (`is_switch2_usb_family()`).
+
+1. **Bulk sequence** — Read configuration descriptor, open **interface 1** bulk IN/OUT, send **17 packets** from **`Switch2UsbInitPackets.h`** (~**12 ms** spacing between rounds), optional bulk IN read per round when an IN endpoint exists.
+2. **No post-bulk Switch 1 init** — On successful bulk completion, **`init_state_ = DONE`** immediately and **`tuh_hid_receive_report()`** starts — **Switch 1 `0x80` HID init is skipped** for Switch 2–family devices.
+3. **Switch2ProHost** — Parses **64-byte** HID report ID **0x09** (1-byte counter + **10-byte** payload) with **Switch 2–specific** button bits (see v1.0.0.9a / [Wired_Controllers.md](Wired_Controllers.md)).
+4. **Async safety** — Bulk callbacks use **`switch2_make_cb_token(daddr, instance)`** and **`HostManager::get_switch_pro_host()`** to look up the live driver; safe after hot-swap or unplug.
+5. **Teardown** — **`disconnect_cb()`** / destructor call **`switch2_cancel_bringup()`**: abort in-flight bulk transfers, clear pending retry state.
+
+### DualShock 3 — wired USB host
+
+**Problem:** **DualShock 3** over **USB cable** failed to connect or dropped shortly after plug-in on **PIO USB host** boards. Init used the **USB gadget** default OUT template (leading **`0x01`**) and **async-only** control transfers without servicing **`pio_usb_host_frame()`**, so enable/LED commands never completed reliably.
+
+**Reference:** [USB Host Shield PS3](https://github.com/felis/USB_Host_Shield_2.0) host report buffer / feature **0xF4** enable sequence.
+
+#### Changes
+
+1. **Host OUT report layout** — **`init_host_out_report()`** builds the **USB Host Shield `PS3_REPORT_BUFFER`** layout (player LED bitmap **`0x02 << player`**, per-LED timing fields) instead of copying gadget **`DEFAULT_OUT_REPORT`**.
+2. **Synchronous wired init** — On plug-in: **SET feature 0xF4** `{0x42, 0x0c, 0x00, 0x00}` then **synchronous OUT** (rumble/LED report) via **`send_control_xfer_wait()`**, polling **`pio_usb_host_frame()` + `tuh_task()`** up to **150 ms** per step.
+3. **Immediate input** — Wired path sets **`reports_enabled`** and **`InitStage::DONE`** after enable + LED OUT; **`tuh_hid_receive_report()`** starts without waiting on the old multi-stage **GET feature 0xF2** chain (that chain remains for **Bluetooth auto-pair** on `CONFIG_EN_BLUETOOTH` builds only).
+4. **PIO keepalive** — **`KEEPALIVE_MS = 1000`** on USB host sends periodic neutral OUT so the DS3 stays connected when idle; **`HostManager`** includes PS3 in periodic **`send_feedback()`**.
+5. **Async OUT for rumble** — Runtime rumble/keepalive uses non-blocking **`send_control_output_async()`** so feedback does not stall IN.
+
+**File:** `src/USBHost/HostDriver/PS3/PS3.cpp`, `PS3.h`.
+
+**User testing (Waveshare RP2350-USB-A):** **DualShock 3 wired** connects and holds input after flash.
+
+### Xbox 360 wireless receiver — wired USB host
+
+**Problem:** **Microsoft Xbox 360 wireless PC receiver** (`045e:0719`) plugged into the adapter’s **PIO USB host** port often failed to **sync** a wireless pad or delivered **no input** when **`MAX_GAMEPADS=1`**. Only one of four receiver interfaces was stored; **controller-present** was mis-detected (**headset `0x40`** treated as paired); connect path **slept 1 s** and blocked PIO servicing; **`Xbox360WHost`** assumed a fixed struct layout for variable-length wireless reports.
+
+#### Changes
+
+1. **Four XInput instances on single-player builds** — **`OGXM_TUH_XINPUT_INSTANCES = 4`** when `MAX_GAMEPADS < 4`; **`MAX_INTERFACES = MAX_GAMEPADS + OGXM_TUH_XINPUT_INSTANCES`**; **`host_storage_index()`** maps XInput instances to **`MAX_GAMEPADS + instance`**.
+2. **One driver, four ports** — **`HostManager`** treats sibling **`XBOX360W`** interfaces as sharing one gamepad slot when `MAX_GAMEPADS=1`; **`process_report` / `connect_cb` / `disconnect_cb`** fall back to the mounted **`Xbox360WHost`** when the per-instance slot has no driver pointer.
+3. **`tuh_xinput` pairing** — **`prime_port_for_pairing()`** on each idle port: **RUMBLE_ENABLE + player LED** (quadrant from interface number **0/2/4/6**); called at **set_config** and periodically via **`service_wireless_ports()`** from **`HostManager::send_feedback()`**.
+4. **Connect detection** — Controller present when **IN byte1 & 0x80** (not merely non-zero / headset **0x40**); on connect: **RUMBLE_ENABLE**, **`wait_for_tx_complete()`** (200 ms cap), **LED** — **no 1 s sleep**.
+5. **Input reports** — Accept **report size 0x13 or 0x14**; **`Xbox360WHost::process_report()`** decodes **button word, triggers, sticks** from raw byte offsets; tracks **`active_instance_`** for rumble on the port that last connected.
+6. **Rumble** — **`set_rumble()`** skips **RUMBLE_ENABLE** when already connected; returns false if port not connected (avoids spurious OUT on idle RF slots).
+
+**Files:** `Board/Config.h`, `HostManager.h`, `HostDriver/XInput/tuh_xinput/tuh_xinput.cpp`, `HostDriver/XInput/Xbox360W.cpp`.
+
+**User testing (Waveshare RP2350-USB-A):** **360 wireless receiver + pad** sync and input confirmed over PIO USB host.
+
+### Hot-swap (Switch 1 ↔ Switch 2 Pro)
+
+Unplug during bulk or HID init runs **`HostManager::disconnect_cb()`** → driver **`disconnect_cb()`** → bulk cancel. Plugging the other model starts a fresh init path (Switch 1 **0x80** vs Switch 2 bulk) without requiring an adapter power cycle.
+
+### Files (all wired-host fixes)
+
+| File | Role |
+|------|------|
+| `src/USBHost/HostManager.h` | PIO **`pio_usb_host_frame()`** on all host boards; PS3/Switch periodic feedback; 360W driver routing; **`disconnect_cb`** on unmount; **`get_switch_pro_host()`** |
+| `src/Board/Config.h` | **`OGXM_TUH_XINPUT_INSTANCES`** (4 when `MAX_GAMEPADS < 4`) |
+| `src/USBHost/HostDriver/SwitchPro/SwitchPro.cpp` | Switch 1 wired init, Switch 2 bulk bring-up, Switch 1 input mapping, PIO USB service loop |
+| `src/USBHost/HostDriver/SwitchPro/SwitchPro.h` | Init state machine, bulk bring-up members, `disconnect_cb` |
+| `src/USBHost/HostDriver/SwitchPro/Switch2ProHost.cpp` | Switch 2 Pro wired button decode |
+| `src/USBHost/HostDriver/SwitchPro/Switch2UsbInitPackets.h` | 17 bulk OUT packets (capture tool / HHL) |
+| `src/Descriptors/SwitchPro.h` | Wired USB constants (`REPORT_ID_USB_OUT`, `USB_SUB_*`, `USB_PROBE`) |
+| `src/USBHost/HostDriver/PS3/PS3.cpp` | DualShock 3 wired init, sync control xfer, 1 Hz keepalive |
+| `src/USBHost/HostDriver/XInput/tuh_xinput/tuh_xinput.cpp` | 360 wireless receiver port priming, connect detect, **`service_wireless_ports()`** |
+| `src/USBHost/HostDriver/XInput/Xbox360W.cpp` | Wireless input decode from byte offsets, active instance rumble |
+
+**Build:** `./scripts/build.sh` → board **RP2350_USB_A**; typical **`-DMAX_GAMEPADS=1`**. Optional **`-DOGXM_SWITCH2_HID_RAW_LOG=ON`** for UART hex when Switch 2 Pro digital button bytes change.
+
+**User testing (Waveshare RP2350-USB-A):** **Switch 2 Pro wired**, **DualShock 3 wired**, and **Xbox 360 wireless receiver + pad** confirmed on PIO USB host. **Switch 1 Pro wired** — init and mapping updated; retest after flash if a prior S2 regression was seen.
 
 ---
 
@@ -481,15 +590,15 @@ OGX-Mini’s existing **wired Xbox One GIP** path (`tuh_xinput`, subclass `0x47`
 
 | Area | Improvement |
 |------|-------------|
-| **XInput (360)** | XSM3 authentication and descriptors aligned with joypad-os; adapter works on Xbox 360 with BT controllers (PS5, Xbox One). **360 wireless PC receiver** supported (`Xbox360WHost`). **Xbox One/Series wireless dongle (`045e:02e6` / `02fe`)** — see [Future planned](#future-planned). 8BitDo wired fix: LED keepalive for VID 0x2DC8 / PID 0x3016 or 0x3106. Report built every loop, send when endpoint ready — same minimal-latency pattern as Switch/PS3. |
-| **PS3** | Stuck inputs and delays addressed via L2/R2 axes; DS3-accurate sticks (0–255, center 0x80, ~1.5% deadzone); D-pad and face button mapping; Home (PS) button with 8-frame latch for BT controllers. **v1.0.0.9a:** PC host rumble deadzone + strict small-motor `0`/`1` so idle rumble does not stick on the BT pad. |
+| **XInput (360)** | XSM3 authentication and descriptors aligned with joypad-os; adapter works on Xbox 360 with BT controllers (PS5, Xbox One). **360 wireless PC receiver** supported (`Xbox360WHost`). **v1.0.0.11a:** PIO USB wired receiver — **4 XInput instances** when `MAX_GAMEPADS=1`, port **priming**, **0x80** connect detect, byte-offset decode. **Xbox One/Series wireless dongle (`045e:02e6` / `02fe`)** — see [Future planned](#future-planned). 8BitDo wired fix: LED keepalive for VID 0x2DC8 / PID 0x3016 or 0x3106. |
+| **PS3** | Stuck inputs and delays addressed via L2/R2 axes; DS3-accurate sticks (0–255, center 0x80, ~1.5% deadzone); D-pad and face button mapping; Home (PS) button with 8-frame latch for BT controllers. **v1.0.0.9a:** PC host rumble deadzone + strict small-motor `0`/`1`. **v1.0.0.11a:** **DualShock 3 wired USB host** — USB Host Shield init, sync control xfer + PIO service, **1 Hz keepalive**. |
 | **PS2 (GPIO)** | Home only = IGR (L1+L2+R1+R2+Start+Select); Home+Start = shutdown (L1+L2+R1+R2+L3+R3). OPL and protocol stability (first response byte = mode byte). |
 | **OG Xbox** | Guide only = IGR. Shutdown = LT+RT+Back+White via **Guide+Start** or **Guide+View (Back)**; Xbox BT often omits Start while Guide is held. Shutdown report strips Start so the chord matches BIOS/softmod expectations. |
-| **Switch Pro** | Analog stick sensitivity gain (default 1.2×) for more responsive sticks; configurable in `Switch.cpp`. |
-| **Switch 2** | **Pro 2** (wired **0x2069**): **Switch2ProHost**. **Pro 2 + Joy-Con 2 L/R** (BLE): **uni_hid_parser_switch2** — GATT pairing, 63-byte input, rumble keepalive, Home → SYS latch, **L+R pair merge**, **dual-half latency fixes**. See [§ Nintendo Switch 2 — Bluetooth](#nintendo-switch-2--bluetooth-pico-w--pico-2-w) and [§ Joy-Con pair latency](#joy-con-pair-merge--latency-when-both-halves-are-active). |
-| **Boards** | RP2350_ZERO, RP2040_XIAO, RP2354 supported (Standard/PIO-USB host path). |
+| **Switch Pro** | Analog stick sensitivity gain (default 1.2×) for more responsive sticks; configurable in `Switch.cpp`. **v1.0.0.11a:** **Switch 1/2 Pro wired** on PIO USB host — Chromium **0x80** init, bulk bring-up, mapping fixes. See [§ PIO USB host — wired connection fixes](#pio-usb-host--wired-connection-fixes-waveshare-rp2350-usb-a). |
+| **Switch 2** | **Pro 2** (wired **0x2069**): **Switch2ProHost** + bulk bring-up (v1.0.0.11a). **Pro 2 + Joy-Con 2 L/R** (BLE): **uni_hid_parser_switch2** — GATT pairing, 63-byte input, rumble keepalive, Home → SYS latch, **L+R pair merge**, **dual-half latency fixes**. See [§ Nintendo Switch 2 — Bluetooth](#nintendo-switch-2--bluetooth-pico-w--pico-2-w) and [§ Joy-Con pair latency](#joy-con-pair-merge--latency-when-both-halves-are-active). |
+| **Boards** | RP2350_ZERO, RP2040_XIAO, RP2354 supported (Standard/PIO-USB host path). **RP2350-USB-A (Waveshare):** v1.0.0.11a validation for **Switch Pro, DualShock 3, 360 wireless receiver** wired host. |
 | **Latency** | Main loop delay default **0 µs**; `tud_task()` before `process()` so reports send every loop when ready; XInput/Switch/PS3 send latest state when USB ready (no `new_pad_in()` gate). Switch Pro and PS3 always build report every loop so host poll (`get_report`) and IN push both see current state — only remaining delay is BT radio when wireless. |
 | **Build** | Interactive scripts `scripts/build.sh` (Linux/macOS) and `scripts/build.ps1` (Windows) for board selection, fixed/default mode, and Release/Debug; output in `scripts/build/`. See [README](../../../README.md) Build section. |
 | **Bluetooth (Pico W)** | **DS4 / Classic ACL:** BLE advertising **paused** while Classic pad connected; **BR inquiry stopped** during ACL; **no DS4 virtual mouse**; **6 s PS4 rumble** grace. **Xbox Series (BLE):** no stall disconnect when idle; keepalive 12 s; stale-slot delete on reconnect. **Switch 2 (BLE):** Pro 2 + Joy-Con 2 L/R — custom GATT parser, rumble keepalive, Home latch, **L+R merge**, **dual-half latency fixes**. **Switch 1 Joy-Con (Classic BT):** L+R merge, IMU off when paired, same latency path as SW2. **General:** `sleep_ms(1)` main loop; lock-free BT pad-in (**2-slot** staging for Joy-Con pairs); re-enable scan on last disconnect. **v1.0.0.9a:** ~**1 s connection rumble** at `device_ready` (DS4 delayed start). |
-| **PIO USB host (Pico W)** | **Wired unplug:** Debounced combo of **HCD connect**, **`tuh_mounted` over all device addresses**, and **no `process_report` / setup activity** (~**3 s**) so disconnect registers when D+/D− line state is wrong under PIO; **`tuh_deinit`** + restore GPIO line IRQs + BT release. See [§ Pico W — PIO USB wired controller unplug detection](#pico-w--pico-2-w--pio-usb-wired-controller-unplug-detection). |
+| **PIO USB host (Pico W)** | **Wired unplug:** Debounced combo of **HCD connect**, **`tuh_mounted` over all device addresses**, and **no `process_report` / setup activity** (~**3 s**) so disconnect registers when D+/D− line state is wrong under PIO; **`tuh_deinit`** + restore GPIO line IRQs + BT release. **v1.0.0.11a (all PIO host boards):** **`pio_usb_host_frame()`** after feedback OUT; wired **Switch Pro / PS3 / 360 receiver** connection fixes — see [§ PIO USB host — wired connection fixes](#pio-usb-host--wired-connection-fixes-waveshare-rp2350-usb-a). |
 | **DS3 + Bluetooth** | **USB auto-pair:** After PS3 wired init, **feature `0xF5`** programs the **DS3** with the adapter’s **BD_ADDR** (`CONFIG_EN_BLUETOOTH`); deferred if BT address not ready. See [§ DualShock 3 — automatic USB programming for Bluetooth pairing](#dualshock-3--automatic-usb-programming-for-bluetooth-pairing). |

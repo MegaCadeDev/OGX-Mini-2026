@@ -77,3 +77,9 @@ void tuh_xinput::xbox360w_disconnect_cb(uint8_t dev_addr, uint8_t instance) {
     OGXMini::wireless_connected(false, idx);
     HostManager::get_instance().disconnect_cb(HostManager::DriverClass::XINPUT, dev_addr, instance);
 }
+
+void tuh_xinput::host_activity_cb(uint8_t dev_addr, uint8_t instance) {
+    (void)dev_addr;
+    (void)instance;
+    HostManager::get_instance().record_usb_host_input_activity();
+}

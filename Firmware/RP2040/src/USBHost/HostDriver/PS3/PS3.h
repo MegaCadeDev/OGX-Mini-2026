@@ -26,14 +26,26 @@ private:
     {
         uint8_t dev_addr{0xFF};
         InitStage stage{InitStage::RESP1};
+        uint8_t init_retries{0};
         std::array<uint8_t, 17> init_buffer;
         std::array<uint8_t, 8> bt_pair_report{};
         PS3::OutReport* out_report{nullptr};
+        uint8_t usb_instance{0};
         bool reports_enabled{false};
         /** If set, points to PS3Host::ds3_bt_pair_deferred_ — BT addr was not ready during init. */
         bool* defer_bt_pair{nullptr};
     };
 
+    static constexpr uint8_t MAX_INIT_RETRIES = 3;
+
+    static void send_init_get_report(InitState* init_state);
+    static void init_host_out_report(PS3::OutReport& out, uint8_t player_idx);
+    static bool send_control_xfer_wait(uint8_t dev_addr, const tusb_control_request_t* req, uint8_t* buffer,
+                                       uint32_t max_attempts_ms);
+    static bool send_control_output_sync(uint8_t address, PS3::OutReport* report);
+    static bool send_control_output_async(uint8_t address, PS3::OutReport* report);
+
+    static const tusb_control_request_t ENABLE_USB_REQUEST;
     static const tusb_control_request_t RUMBLE_REQUEST;
 #if defined(CONFIG_EN_BLUETOOTH)
     /** HID feature report: program DualShock 3 master Bluetooth address (see Bluepad32 sixaxispairer). */
@@ -43,6 +55,12 @@ private:
     PS3::InReport prev_in_report_;
     PS3::OutReport out_report_;
     InitState init_state_;
+    uint32_t last_keepalive_ms_{0};
+#if defined(CONFIG_EN_USB_HOST)
+    static constexpr uint32_t KEEPALIVE_MS = 1000u;
+#else
+    static constexpr uint32_t KEEPALIVE_MS = 0u;
+#endif
 #if defined(CONFIG_EN_BLUETOOTH)
     /** Persistent buffer for async SET_REPORT (feature 0xF5). */
     std::array<uint8_t, 8> bt_pair_buf_{};

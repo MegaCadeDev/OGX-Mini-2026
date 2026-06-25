@@ -20,6 +20,7 @@
 #include "Board/ogxm_log.h"
 #include "UserSettings/UserSettings.h"
 #include "Gamepad/Gamepad.h"
+#include "Gamepad/I2CWirePad.h"
 #include "TaskQueue/TaskQueue.h"
 
 constexpr uint32_t FEEDBACK_DELAY_MS = 250;
@@ -54,7 +55,7 @@ namespace I2C {
     struct PacketIn {
         uint8_t             packet_len{sizeof(PacketIn)};
         PacketID            packet_id{PacketID::PAD};
-        Gamepad::PadIn      pad_in{Gamepad::PadIn()};
+        I2CWirePadIn        pad_in{};
         Gamepad::ChatpadIn  chatpad_in{0};
         uint8_t             reserved[4]{0};
     };
@@ -128,7 +129,7 @@ namespace I2C {
                             // instance_->packet_in_ = *packet_in_p;
                             // *packet_out_p = instance_->packet_out_;
                             // instance_->new_pad_in_.store(true);
-                            _gamepads[0].set_pad_in(packet_in_p->pad_in);
+                            _gamepads[0].set_pad_in(i2c_pad_from_wire(packet_in_p->pad_in));
                             if (_gamepads[0].new_pad_out()) {
                                 packet_out_p->pad_out = _gamepads[0].get_pad_out();
                             }
@@ -249,7 +250,7 @@ namespace I2C {
                 if (packet_cmd.status == Status::READY) {
                     Gamepad& gamepad = _gamepads[i + 1];
                     PacketIn packet_in;
-                    packet_in.pad_in = gamepad.get_pad_in();
+                    packet_in.pad_in = i2c_wire_pad_from(gamepad.get_pad_in());
                     packet_in.chatpad_in = gamepad.get_chatpad_in();
 
                     if (write_blocking(slave.address, &packet_in, sizeof(PacketIn))) {

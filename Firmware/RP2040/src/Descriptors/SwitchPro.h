@@ -46,6 +46,14 @@ namespace SwitchPro
 		static constexpr uint8_t MODE             = 0x03;
 		static constexpr uint8_t FULL_REPORT_MODE = 0x30;
 		static constexpr uint8_t GYRO             = 0x40;
+		/** Unrecognized subcommand; sent after 0x80 0x04 so init gets a 0x21 ack. */
+		static constexpr uint8_t USB_PROBE        = 0x33;
+		/** Wired USB output report ID and subcommands (not Bluetooth 0x11 path). */
+		static constexpr uint8_t USB_OUT              = 0x80;
+		static constexpr uint8_t USB_SUB_MAC            = 0x01;
+		static constexpr uint8_t USB_SUB_HANDSHAKE      = 0x02;
+		static constexpr uint8_t USB_SUB_BAUD           = 0x03;
+		static constexpr uint8_t USB_SUB_DISABLE_TIMEOUT = 0x04;
 	}
 
 	// First report byte (buttons_right): bit layout per real hardware / Bluepad32 parse_report_30_pro_controller
@@ -111,6 +119,8 @@ namespace SwitchPro
 	static constexpr uint16_t STICK_MID = 0x7FF;
 	static constexpr uint16_t STICK_MAX = 0xFFF;
 
+	static constexpr uint8_t REPORT_ID_OUTPUT_SUBCMD = 0x01;
+	static constexpr uint8_t REPORT_ID_OUTPUT_RUMBLE = 0x10;
 	static constexpr uint8_t REPORT_ID_STANDARD = 0x30;
 	/** Switch 2 Pro (USB) full input reports use 0x09; layout matches 0x30 after id + timer. */
 	static constexpr uint8_t REPORT_ID_SWITCH2_FULL = 0x09;
@@ -118,6 +128,7 @@ namespace SwitchPro
 	static constexpr uint8_t REPORT_ID_FULL_ALT   = 0x31;
 	static constexpr uint8_t REPORT_ID_SUBCMD   = 0x21;
 	static constexpr uint8_t REPORT_ID_USB_INIT = 0x81;
+	static constexpr uint8_t REPORT_ID_USB_OUT  = 0x80;
 	static constexpr int     REPORT_SIZE        = 64;
 	static constexpr int     USB_INIT_REPORT_SIZE = 64;
 

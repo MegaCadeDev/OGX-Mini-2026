@@ -30,6 +30,8 @@ namespace board_api_usbh {
     void store_host_line_connected(bool connected);
     /** After tuh_deinit / PIO release path, re-enable D+/D− edge IRQs for the next cable attach. */
     void enable_host_line_irq_monitoring();
+    /** Stop PIO USB host (SOF timer, tuh_deinit) before core reset / reboot. Standard boards. */
+    void stop_pio_usb_host() __attribute__((weak));
 }
 
 #endif // BOARD_API_PRIVATE_H

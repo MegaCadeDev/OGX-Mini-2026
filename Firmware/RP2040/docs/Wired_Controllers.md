@@ -16,6 +16,8 @@ This document lists controllers supported when connected to the OGX-Mini adapter
 
 *Matched by USB class; no fixed VID/PID list. UsbdSecPatch is not required on Xbox 360.*
 
+**Xbox 360 wireless PC receiver (`045e:0719`), wired to adapter USB host:** Plug the **receiver** into the adapter’s host port; sync a **wireless 360 pad** to any quadrant. On **PIO USB host** boards (Waveshare RP2350-USB-A, Pico, Feather, etc.), v1.0.0.11a polls **all four RF ports** even when `MAX_GAMEPADS=1` and primes idle ports for sync. See [IMPROVEMENTS.md — PIO USB host wired fixes](IMPROVEMENTS.md#pio-usb-host--wired-connection-fixes-waveshare-rp2350-usb-a).
+
 ---
 
 ### PlayStation 3 (DualShock 3 and compatible)
@@ -27,6 +29,8 @@ This document lists controllers supported when connected to the OGX-Mini adapter
 - Bigben, Gioteck, Hori (Fighting Commander, Horipad, Fightstick), Mad Catz (Fightstick, Fightpad), PDP, PowerA, Nyko, and other PS3‑protocol controllers
 
 *See `PS3_IDS` in `HardwareIDs.h` for the full VID/PID list.*
+
+**DualShock 3 over USB cable (PIO USB host):** v1.0.0.11a sends **SET feature 0xF4** and a **player LED OUT** report at connect (USB Host Shield sequence) with **`pio_usb_host_frame()`** during init, plus a **1 Hz keepalive OUT** so the pad stays connected. On **Pico W / Pico 2 W**, Bluetooth **auto-pair** (feature **0xF5**) still runs after wired init when enabled. See [IMPROVEMENTS.md — DualShock 3 wired USB host](IMPROVEMENTS.md#dualshock-3--wired-usb-host).
 
 ---
 
@@ -60,8 +64,10 @@ This document lists controllers supported when connected to the OGX-Mini adapter
 
 *See `SWITCH_PRO_IDS` and `SWITCH_WIRED_IDS` in `HardwareIDs.h` for the full VID/PID list.*
 
+**Switch 1 Pro (PID 0x2009), wired USB:** Uses **Chromium-style wired USB init** (report **0x80** subcommands: MAC, handshake, baud, disable timeout; then **0x12** + subcommand **0x33** probe, player LED, full report mode, IMU). **Not** the Bluetooth **0x11** handshake path. After init, standard **SwitchProHost** decodes the **10-byte** `SwitchPro::InReport` payload (report IDs **0x30** / **0x31** or raw 10 bytes). D-pad and **L3/R3** mapping corrected for wired layout. See [IMPROVEMENTS.md](IMPROVEMENTS.md#pio-usb-host--wired-connection-fixes-waveshare-rp2350-usb-a).
+
 **Switch 2–family USB (Pro Controller 2, Joy‑Con 2, NSO GameCube, etc.):**  
-The firmware runs the same vendor **bulk OUT** bring‑up on **USB configuration 1, interface 1** as the PC capture tool (`Tools/controller_capture/switch2_usb_init.py` / HandHeldLegend ProCon 2 enabler), then continues with the normal Switch Pro **HID** init (handshake, full report mode, etc.). Wired input reports may use report ID **0x09** (with a 1‑byte counter after the ID).
+The firmware runs the same vendor **bulk OUT** bring‑up on **USB configuration 1, interface 1** as the PC capture tool (`Tools/controller_capture/switch2_usb_init.py` / [HandHeldLegend procon2tool](https://github.com/HandHeldLegend/procon2tool)). **Switch 2–family devices do not run Switch 1 `0x80` HID init after bulk** — bring-up completes at **`DONE`** and HID input reports begin immediately. Wired input reports may use report ID **0x09** (with a 1‑byte counter after the ID).
 
 **Switch 2 Pro (PID 0x2069), wired USB:** After the same **bulk OUT** bring‑up on **config 1 / interface 1**, **Switch2ProHost** parses the standard **64‑byte** HID report (ID **0x09**, 1‑byte counter, then **10‑byte** `SwitchPro::InReport` payload). Digitals use **Switch‑2‑specific** bit positions (not classic **Buttons0/1/2**): face **B/A/Y/X**, **RB**, **LB** (Home bit), **Minus** → Back, **Plus** / d‑pad directions, **L3**, **Start** (classic R), **R3** (classic ZR bit), **SYS** (classic `bl` d‑pad up), **ZL/ZR** → **LT/RT** (digital full press from captured bits), and **Capture** is still not mapped to **MISC**. **GL**, **GR**, and **Chat** are **documented in source** (`Switch2ProHost.cpp`) but **left unmapped**. Extended report bytes are not used for decoding (avoids IMU coupling / flicker). **Bluetooth LE** for **Pro 2** and **Joy-Con 2** (**0x2066** / **0x2067**) on **Pico W / Pico 2 W** is documented in [IMPROVEMENTS.md](IMPROVEMENTS.md#nintendo-switch-2--bluetooth-pico-w--pico-2-w) (custom GATT — not wired USB). Other Switch 2–family PIDs keep **SwitchProHost**.
 

@@ -87,6 +87,11 @@ namespace tuh_xinput
     bool receive_report(uint8_t address, uint8_t instance);
     bool set_rumble(uint8_t address, uint8_t instance, uint8_t rumble_l, uint8_t rumble_r, bool block);
     bool set_led(uint8_t address, uint8_t instance, uint8_t led_number, bool block);
+    bool is_connected(uint8_t address, uint8_t instance);
+    /** Player LED quadrant (1–4) from wireless receiver USB interface number (0,2,4,6). */
+    uint8_t wireless_led_quadrant(uint8_t address, uint8_t instance);
+    /** Keep all four wireless ports primed (RUMBLE_ENABLE + LED) until a pad connects. */
+    void service_wireless_ports(uint8_t dev_addr);
 
     //Wireless only atm
     void xbox360_chatpad_init(uint8_t address, uint8_t instance); 
@@ -99,6 +104,8 @@ namespace tuh_xinput
     TU_ATTR_WEAK void report_sent_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len);
     TU_ATTR_WEAK void xbox360w_connect_cb(uint8_t dev_addr, uint8_t instance);
     TU_ATTR_WEAK void xbox360w_disconnect_cb(uint8_t dev_addr, uint8_t instance);
+    /** Called on every successful XInput IN transfer (keepalive for host idle watchdog). */
+    TU_ATTR_WEAK void host_activity_cb(uint8_t dev_addr, uint8_t instance);
     void report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len);
     
 }; // namespace tuh_xinput
