@@ -48,7 +48,7 @@ public:
         }
     };
 
-#if (OGXM_BOARD != PI_PICOW) || defined(CONFIG_EN_USB_HOST)  // PI_PICOW: Core1 for Wii USB host
+#if !defined(OGXM_BOARD_USES_PICO_W_FIRMWARE) || defined(CONFIG_EN_USB_HOST)  // Pico W path: Core1 for Wii USB host
     struct Core1
     {
         static inline uint32_t get_new_task_id()

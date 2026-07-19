@@ -130,7 +130,11 @@
 
 #elif defined(CONFIG_OGXM_BOARD_RP2354)
     #define OGXM_BOARD          RP2354
-    #define PIO_USB_DP_PIN      0  // DM = 1
+    /* RP2350 + Pi Radio Module 2 (CYW43439): same PIO USB host pins as Pico 2 W. */
+    #define PIO_USB_DP_PIN      0  // D+ = GP0, D- = GP1
+    #ifndef PIO_USB_SWAP_DP_DM
+    #define PIO_USB_SWAP_DP_DM  0
+    #endif
     #define LED_INDICATOR_PIN   25
 
 #else
@@ -164,5 +168,11 @@
         PIO_USB_PINOUT_DPDM \
     }
 #endif // defined(PIO_USB_DP_PIN)
+
+/* Boards that run the Pico W firmware path (CYW43439 BT + optional PIO USB host mux). */
+#if defined(CONFIG_OGXM_BOARD_PI_PICOW) || defined(CONFIG_OGXM_BOARD_PI_PICO2W) || \
+    (defined(CONFIG_OGXM_BOARD_RP2354) && defined(CONFIG_EN_BLUETOOTH))
+    #define OGXM_BOARD_USES_PICO_W_FIRMWARE 1
+#endif
 
 #endif // _BOARD_CONFIG_H_

@@ -20,7 +20,7 @@ $Boards = @(
     @{ Id = "RP2350_ZERO";  Desc = "Waveshare RP2350-Zero" },
     @{ Id = "RP2350_USB_A"; Desc = "Waveshare RP2350-USB-A" },
     @{ Id = "RP2040_XIAO";  Desc = "Seeed Studio XIAO RP2040" },
-    @{ Id = "RP2354";       Desc = "RP2354" },
+    @{ Id = "RP2354";       Desc = "RP2354 (RP2350 + Pi Radio Module 2 — BT + PIO USB host GP0/GP1)" },
     @{ Id = "ADAFRUIT_FEATHER"; Desc = "Adafruit Feather USB Host" },
     @{ Id = "EXTERNAL_4CH_I2C";  Desc = "External 4CH I2C" },
     @{ Id = "ESP32_BLUEPAD32_I2C";  Desc = "ESP32 Bluepad32 I2C" },
@@ -39,6 +39,8 @@ $FixedDrivers = @(
     @{ Id = "DREAMCAST"; Desc = "Dreamcast (GPIO)" },
     @{ Id = "N64";      Desc = "Nintendo 64 (GPIO)" },
     @{ Id = "DINPUT";   Desc = "DInput" },
+    @{ Id = "PS4";      Desc = "PlayStation 4 (DualShock 4 USB)" },
+    @{ Id = "STEAM";    Desc = "SteamOS / Bazzite (DualSense + touchpad mouse)" },
     @{ Id = "PSCLASSIC"; Desc = "PlayStation Classic" },
     @{ Id = "WEBAPP";   Desc = "Web App" }
 )

@@ -25,6 +25,15 @@ static std::atomic<bool> s_bt_any_connected_cached{false};
 #include "Bluepad32/Bluepad32.h"
 #include "Board/board_api.h"
 #include "Board/ogxm_log.h"
+#include "parser/uni_hid_parser_ds5.h"
+#include "controller/uni_controller.h"
+#include "parser/uni_hid_parser_wii.h"
+#include "Gamepad/MotionImu.h"
+#include "USBDevice/DeviceDriver/MotionOutputActive.h"
+#include "USBDevice/DeviceDriver/Steam/SteamActive.h"
+#include "USBDevice/DeviceDriver/Steam/SteamBtReport.h"
+#include "USBDevice/DeviceDriver/Steam/SteamPassthrough.h"
+#include "USBDevice/DeviceDriver/Steam/SteamTouchpad.h"
 
 #ifndef CONFIG_BLUEPAD32_PLATFORM_CUSTOM
     #error "Pico W must use BLUEPAD32_PLATFORM_CUSTOM"
@@ -80,6 +89,8 @@ static void bp32_disconnect_controller_and_joycon_partner(uni_hid_device_t* d) {
 
 static constexpr uint32_t FEEDBACK_TIME_MS = 250;
 static constexpr uint32_t LED_CHECK_TIME_MS = 500;
+/** Idle pairing health check — restarts BR/LE scan if they died during long USB suspend (e.g. 360 standby). */
+static constexpr uint32_t PAIRING_WATCHDOG_MS = 45000;
 /** If no HID input report reaches us for this long while "connected", the BT link is zombie
  *  (L2CAP stops delivering; OG Xbox then holds last USB report). Force disconnect so user can reconnect. */
 static constexpr uint32_t BT_INPUT_STALL_DISCONNECT_MS = 8000;
@@ -191,6 +202,22 @@ bool any_wii_controller_connected()
     return false;
 }
 
+/** TV-style Wiimote (not Wii U Pro, Classic, or Balance Board). */
+static bool ogxm_is_handheld_wiimote(const uni_hid_device_t* device)
+{
+    if (device == nullptr || device->controller_type != CONTROLLER_TYPE_WiiController) {
+        return false;
+    }
+    switch (device->controller_subtype) {
+        case CONTROLLER_SUBTYPE_WIIUPRO:
+        case CONTROLLER_SUBTYPE_WII_CLASSIC:
+        case CONTROLLER_SUBTYPE_WII_BALANCE_BOARD:
+            return false;
+        default:
+            return true;
+    }
+}
+
 //This solves a function pointer/crash issue with bluepad32
 void set_rumble(uni_hid_device_t* bp_device, uint16_t length, uint8_t rumble_l, uint8_t rumble_r)
 {
@@ -230,6 +257,9 @@ void set_rumble(uni_hid_device_t* bp_device, uint16_t length, uint8_t rumble_l, 
         case CONTROLLER_TYPE_Switch2JoyConLeft:
             uni_hid_parser_switch2_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
             break;
+        case CONTROLLER_TYPE_SteamControllerTriton:
+            uni_hid_parser_steam_triton_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            break;
         default:
             break;
     }
@@ -250,7 +280,8 @@ static void send_feedback_cb(btstack_timer_source *ts)
         /* BLE Xbox (Series) and Switch 2 BLE may not send reports every poll interval. */
         const bool skip_stall_disconnect =
             (bp_device->controller_type == CONTROLLER_TYPE_XBoxOneController && bp_device->hids_cid != 0) ||
-            uni_hid_parser_switch2_is_ble_device(bp_device);
+            uni_hid_parser_switch2_is_ble_device(bp_device) ||
+            uni_hid_parser_steam_triton_is_device(bp_device);
         /* Virtual slot (e.g. DS4's BT "mouse"): never gets gamepad HID → would always stall-disconnect
          * and drop the real controller. */
         if (uni_hid_device_is_virtual_device(bp_device))
@@ -418,8 +449,114 @@ static void maybe_restart_bredr_inquiry_after_disconnect(int disconnected_idx) {
             continue;
         if (gap_get_connection_type(d->conn.handle) == GAP_CONNECTION_ACL)
             return;
+        /* Xbox Series BLE also stops BR inquiry (same radio contention). */
+        if (d->controller_type == CONTROLLER_TYPE_XBoxOneController && d->hids_cid != 0)
+            return;
     }
     uni_bt_bredr_scan_start();
+#endif
+}
+
+/**
+ * CYW43: Xbox Series (BLE) connect stops LE scan (and BR inquiry) to avoid supervision timeout,
+ * but leaves Bluepad32 "new connections" enabled. On disconnect, enable_new_connections(true) is a
+ * no-op, so LE scan never resumes and the pad cannot reconnect without power-cycling the Pico.
+ * Restart LE scan unless another pad still requires it off.
+ */
+static void maybe_restart_ble_scan_after_disconnect(int disconnected_idx) {
+#if defined(CONFIG_TARGET_PICO_W)
+    if (!uni_bt_enable_new_connections_is_enabled())
+        return;
+    for (uint8_t i = 0; i < CONFIG_BLUEPAD32_MAX_DEVICES; ++i) {
+        if (i == static_cast<unsigned>(disconnected_idx))
+            continue;
+        if (!bt_devices_[i].connected)
+            continue;
+        uni_hid_device_t* d = uni_hid_device_get_instance_for_idx(static_cast<int>(i));
+        if (!d || uni_bt_conn_get_state(&d->conn) != UNI_BT_CONN_STATE_DEVICE_READY)
+            continue;
+        if (d->controller_type == CONTROLLER_TYPE_XBoxOneController && d->hids_cid != 0)
+            return;
+        /* Solo Switch Joy-Con keeps LE scan off while waiting for partner over Classic BT. */
+        if (uni_hid_parser_switch_solo_needs_partner(d))
+            return;
+    }
+    uni_bt_le_scan_start();
+#endif
+}
+
+/** Set in device_ready — only reboot after a fully working pad disconnects (not failed pair attempts). */
+static bool s_bt_slot_was_ready[CONFIG_BLUEPAD32_MAX_DEVICES]{};
+
+/** Full chip reset after last ready BT pad drops — next pair is always a clean first connect. */
+static btstack_timer_source_t s_bt_disconnect_reboot_timer;
+static bool s_bt_disconnect_reboot_pending = false;
+
+static void bt_disconnect_reboot_cb(btstack_timer_source_t* ts) {
+    (void)ts;
+    s_bt_disconnect_reboot_pending = false;
+    printf("[BP32] Last controller disconnected — restarting Pico for clean reconnect\n");
+    board_api::reboot();
+}
+
+static void restore_bt_pairing_mode(int disconnected_idx);
+
+#if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
+static bool is_pairing_idle() {
+#if defined(CONFIG_EN_USB_HOST)
+    if (board_api::usb::host_any_pad_mounted())
+        return false;
+#endif
+    return !any_connected();
+}
+
+/** Restart BR/LE scans when idle; no-op if a pad or wired host controller is active. */
+static void ensure_idle_pairing_scans(int disconnected_idx) {
+    if (!is_pairing_idle())
+        return;
+    maybe_restart_bredr_inquiry_after_disconnect(disconnected_idx);
+    maybe_restart_ble_scan_after_disconnect(disconnected_idx);
+    ogxm_resume_ble_ads_if_no_acl_pad(disconnected_idx);
+    if (!uni_bt_enable_new_connections_is_enabled())
+        uni_bt_enable_new_connections_unsafe(true);
+}
+
+static btstack_timer_source_t s_pairing_watchdog_timer;
+
+static void pairing_watchdog_cb(btstack_timer_source_t* ts) {
+    ensure_idle_pairing_scans(-1);
+    btstack_run_loop_set_timer(ts, PAIRING_WATCHDOG_MS);
+    btstack_run_loop_add_timer(ts);
+}
+
+static btstack_context_callback_registration_t s_usb_resume_bt_reg;
+
+static void usb_resume_on_bt_main(void* ctx) {
+    (void)ctx;
+    if (!is_pairing_idle())
+        return;
+    printf("[BP32] USB resume — restoring BT pairing scans\n");
+    restore_bt_pairing_mode(-1);
+}
+#endif /* CONFIG_EN_BLUETOOTH && CONFIG_TARGET_PICO_W */
+
+static void restore_bt_pairing_mode(int disconnected_idx) {
+    if (led_timer_set_)
+        btstack_run_loop_remove_timer(&led_timer_);
+    led_timer_set_ = true;
+    led_timer_.process = check_led_cb;
+    led_timer_.context = nullptr;
+    btstack_run_loop_set_timer(&led_timer_, LED_CHECK_TIME_MS);
+    btstack_run_loop_add_timer(&led_timer_);
+    board_api::set_led(false);
+
+#if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
+    ensure_idle_pairing_scans(disconnected_idx);
+#else
+    maybe_restart_bredr_inquiry_after_disconnect(disconnected_idx);
+    maybe_restart_ble_scan_after_disconnect(disconnected_idx);
+    ogxm_resume_ble_ads_if_no_acl_pad(disconnected_idx);
+    uni_bt_enable_new_connections_unsafe(true);
 #endif
 }
 
@@ -432,6 +569,9 @@ static void device_disconnected_cb(uni_hid_device_t* device) {
     if (uni_hid_parser_switch2_is_ble_device(device)) {
         OGXM_LOG("SW2: disconnected slot %d\n", idx);
     }
+
+    const bool was_ready = s_bt_slot_was_ready[idx];
+    s_bt_slot_was_ready[idx] = false;
 
     bt_devices_[idx].connected = false;
     bool any_other_connected = false;
@@ -452,24 +592,31 @@ static void device_disconnected_cb(uni_hid_device_t* device) {
     prev_touchpad_clicked_[idx] = false;
     pending_adaptive_trigger_send_[idx] = false;
     bt_devices_[idx].gamepad->reset_pad_in();
+    SteamPassthrough::clear();
 
-    if (!led_timer_set_ && !any_other_connected) {
-        led_timer_set_ = true;
-        led_timer_.process = check_led_cb;
-        led_timer_.context = nullptr;
-        btstack_run_loop_set_timer(&led_timer_, LED_CHECK_TIME_MS);
-        btstack_run_loop_add_timer(&led_timer_);
-    }
     if (feedback_timer_set_ && !any_other_connected) {
         feedback_timer_set_ = false;
         btstack_run_loop_remove_timer(&feedback_timer_);
     }
-    maybe_restart_bredr_inquiry_after_disconnect(idx);
-    ogxm_resume_ble_ads_if_no_acl_pad(idx);
-    // Re-enable scanning when last device disconnects so the controller can reconnect without
-    // power-cycling the dongle (fixes "pairing mode but controller won't reconnect" in OG Xbox / BT mode).
-    if (!any_other_connected) {
-        uni_bt_enable_new_connections_unsafe(true);
+
+    if (any_other_connected)
+        return;
+
+    /* Immediately show pairing mode (LED blink + BT scan). */
+    restore_bt_pairing_mode(idx);
+
+    /*
+     * Only reboot after a pad that reached device_ready. Failed pair attempts must
+     * not reboot or we never stay in pairing mode. Reboot clears BT/HIDS so the
+     * next successful pair matches a fresh plug-in.
+     */
+    if (was_ready && !s_bt_disconnect_reboot_pending) {
+        s_bt_disconnect_reboot_pending = true;
+        s_bt_disconnect_reboot_timer.process = bt_disconnect_reboot_cb;
+        s_bt_disconnect_reboot_timer.context = nullptr;
+        btstack_run_loop_set_timer(&s_bt_disconnect_reboot_timer, 500);
+        btstack_run_loop_add_timer(&s_bt_disconnect_reboot_timer);
+        printf("[BP32] Pairing mode on — reboot in 500 ms for clean reconnect\n");
     }
 }
 
@@ -504,6 +651,7 @@ static uni_error_t device_ready_cb(uni_hid_device_t* device) {
     const int out_idx = bp32_get_gamepad_output_idx(device);
 
     bt_devices_[idx].connected = true;
+    s_bt_slot_was_ready[idx] = true;
 #if defined(CONFIG_OGXM_DEBUG)
     if (uni_hid_parser_switch2_is_ble_device(device)) {
         OGXM_LOG("SW2: READY slot %d pid=0x%04x out=%d — input active\n", idx, device->product_id, out_idx);
@@ -551,6 +699,36 @@ static uni_error_t device_ready_cb(uni_hid_device_t* device) {
     if (device->report_parser.set_player_leds != nullptr &&
         !bp32_is_joycon_pair_secondary(device)) {
         device->report_parser.set_player_leds(device, static_cast<uint8_t>(1u << pad_idx));
+    }
+
+    /* Wiimote: Bluepad32 defaults to sideways (horizontal) mapping; OGX uses TV-style vertical.
+     * set_mode() overwrites controller_subtype — save extension info first. */
+    if (ogxm_is_handheld_wiimote(device)) {
+        const uint8_t saved_subtype = device->controller_subtype;
+        const bool has_nunchuk =
+            saved_subtype == CONTROLLER_SUBTYPE_WIIMOTE_NUNCHUK ||
+            saved_subtype == CONTROLLER_SUBTYPE_WIIMOTE_NUNCHUK_ACCEL;
+
+        uni_hid_parser_wii_set_mode(device, WII_MODE_VERTICAL);
+
+        /* Motion output: request accel reports. With a nunchuk, DRM_KA (0x31) is ignored /
+         * has no extension bytes — use DRM_KAE (0x35) so stick + accel both work.
+         * Byte 0x04 = continuous reporting (wiibrew); without it the Wiimote only sends on
+         * large changes, so Switch gyro-pointer feels dead except when shaking hard.
+         * Keep mode VERTICAL (not WII_MODE_ACCEL) so button layouts stay correct. */
+        if (MotionOutputActive::is_enabled()) {
+            if (has_nunchuk) {
+                device->controller_subtype = CONTROLLER_SUBTYPE_WIIMOTE_NUNCHUK_ACCEL;
+                static constexpr uint8_t kWiiReqAccelNunchuk[] = {0xa2, 0x12, 0x04, 0x35};
+                uni_hid_device_send_intr_report(device, kWiiReqAccelNunchuk, sizeof(kWiiReqAccelNunchuk));
+            } else {
+                device->controller_subtype = CONTROLLER_SUBTYPE_WIIMOTE_ACCEL;
+                static constexpr uint8_t kWiiReqAccel[] = {0xa2, 0x12, 0x04, 0x31};
+                uni_hid_device_send_intr_report(device, kWiiReqAccel, sizeof(kWiiReqAccel));
+            }
+        } else if (has_nunchuk) {
+            device->controller_subtype = CONTROLLER_SUBTYPE_WIIMOTE_NUNCHUK;
+        }
     }
 
     // PS5: start with adaptive triggers off; touchpad click toggles them.
@@ -730,8 +908,22 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
         }
     }
     
-    std::tie(gp_in.joystick_lx, gp_in.joystick_ly) = gamepad->scale_joystick_l<10>(uni_gp->axis_x, uni_gp->axis_y);
-    std::tie(gp_in.joystick_rx, gp_in.joystick_ry) = gamepad->scale_joystick_r<10>(uni_gp->axis_rx, uni_gp->axis_ry);
+    /* Nunchuk stick is Bluepad's right axis; map to left stick for character movement. */
+    const bool wii_nunchuk =
+        device->controller_type == CONTROLLER_TYPE_WiiController &&
+        (device->controller_subtype == CONTROLLER_SUBTYPE_WIIMOTE_NUNCHUK ||
+         device->controller_subtype == CONTROLLER_SUBTYPE_WIIMOTE_NUNCHUK_ACCEL);
+    if (wii_nunchuk) {
+        std::tie(gp_in.joystick_lx, gp_in.joystick_ly) =
+            gamepad->scale_joystick_l<10>(uni_gp->axis_rx, uni_gp->axis_ry);
+        gp_in.joystick_rx = 0;
+        gp_in.joystick_ry = 0;
+    } else {
+        std::tie(gp_in.joystick_lx, gp_in.joystick_ly) =
+            gamepad->scale_joystick_l<10>(uni_gp->axis_x, uni_gp->axis_y);
+        std::tie(gp_in.joystick_rx, gp_in.joystick_ry) =
+            gamepad->scale_joystick_r<10>(uni_gp->axis_rx, uni_gp->axis_ry);
+    }
 
     gp_in.motion_source = Gamepad::PadIn::MOTION_SRC_NONE;
     switch (device->controller_type) {
@@ -745,13 +937,49 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
         case CONTROLLER_TYPE_Switch2ProController:
             gp_in.motion_source = Gamepad::PadIn::MOTION_SRC_SWITCH_PRO;
             break;
+        case CONTROLLER_TYPE_WiiController:
+            if (device->controller_subtype == CONTROLLER_SUBTYPE_WIIMOTE_ACCEL ||
+                device->controller_subtype == CONTROLLER_SUBTYPE_WIIMOTE_NUNCHUK_ACCEL) {
+                gp_in.motion_source = Gamepad::PadIn::MOTION_SRC_WII_BT;
+            } else {
+                const int32_t l1 = (uni_gp->accel[0] >= 0 ? uni_gp->accel[0] : -uni_gp->accel[0]) +
+                                   (uni_gp->accel[1] >= 0 ? uni_gp->accel[1] : -uni_gp->accel[1]) +
+                                   (uni_gp->accel[2] >= 0 ? uni_gp->accel[2] : -uni_gp->accel[2]);
+                if (l1 > 16) {
+                    gp_in.motion_source = Gamepad::PadIn::MOTION_SRC_WII_BT;
+                }
+            }
+            break;
         default:
             break;
     }
-    if (gp_in.motion_source != Gamepad::PadIn::MOTION_SRC_NONE) {
+    if (gp_in.motion_source == Gamepad::PadIn::MOTION_SRC_WII_BT) {
+        MotionImu::fill_from_wii_bt(gp_in.accel, gp_in.gyro, uni_gp->accel);
+        /* Switch cursor/aim uses gyro; synthesize rate from accel (no MotionPlus parse yet). */
+        if (idx >= 0 && idx < static_cast<int>(MAX_GAMEPADS)) {
+            static MotionImu::WiiPseudoGyroState s_wii_gyro[MAX_GAMEPADS]{};
+            MotionImu::apply_wii_pseudo_gyro(gp_in.accel, gp_in.gyro, s_wii_gyro[idx],
+                                             to_ms_since_boot(get_absolute_time()));
+        }
+    } else if (gp_in.motion_source != Gamepad::PadIn::MOTION_SRC_NONE) {
         for (int i = 0; i < 3; i++) {
             gp_in.accel[i] = uni_gp->accel[i];
             gp_in.gyro[i] = uni_gp->gyro[i];
+        }
+    }
+
+    if (SteamActive::is_enabled()) {
+        SteamPassthrough::input_has_touchpad =
+            (device->controller_type == CONTROLLER_TYPE_PS5Controller);
+        SteamBtReport::update_from_uni_gamepad(uni_gp);
+        if (device->controller_type == CONTROLLER_TYPE_PS5Controller) {
+            uint8_t touch_points[8]{};
+            bool touchpad_click = false;
+            uni_hid_parser_ds5_get_touchpad(device, touch_points, &touchpad_click);
+            SteamTouchpad::apply_to_passthrough(touch_points, touchpad_click);
+            std::memcpy(gp_in.touch_raw, touch_points, sizeof(gp_in.touch_raw));
+            gp_in.touchpad_click = touchpad_click ? 1 : 0;
+            gp_in.touchpad_valid = 1;
         }
     }
 
@@ -843,7 +1071,21 @@ void wired_usb_takeover_disconnect_bt() {
 }
 
 void wired_usb_release_enable_bt_pairing() {
+#if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
+    s_usb_resume_bt_reg.callback = usb_resume_on_bt_main;
+    s_usb_resume_bt_reg.context = nullptr;
+    btstack_run_loop_execute_on_main_thread(&s_usb_resume_bt_reg);
+#else
     uni_bt_enable_new_connections_safe(true);
+#endif
+}
+
+void on_usb_device_resume() {
+#if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
+    s_usb_resume_bt_reg.callback = usb_resume_on_bt_main;
+    s_usb_resume_bt_reg.context = nullptr;
+    btstack_run_loop_execute_on_main_thread(&s_usb_resume_bt_reg);
+#endif
 }
 
 void init(Gamepad(&gamepads)[MAX_GAMEPADS])
@@ -875,6 +1117,13 @@ void init(Gamepad(&gamepads)[MAX_GAMEPADS])
         btstack_run_loop_set_timer(&s_pico_w_usb_mux_timer_, 1);
         btstack_run_loop_add_timer(&s_pico_w_usb_mux_timer_);
     }
+
+#if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
+    s_pairing_watchdog_timer.process = pairing_watchdog_cb;
+    s_pairing_watchdog_timer.context = nullptr;
+    btstack_run_loop_set_timer(&s_pairing_watchdog_timer, PAIRING_WATCHDOG_MS);
+    btstack_run_loop_add_timer(&s_pairing_watchdog_timer);
+#endif
 }
 
 void run_task(Gamepad(&gamepads)[MAX_GAMEPADS])

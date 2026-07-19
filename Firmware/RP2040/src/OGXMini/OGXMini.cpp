@@ -25,7 +25,7 @@ namespace OGXMini {
         standard::initialize,       // RP2350_USB_A
         standard::initialize,       // RP2350_ZERO
         standard::initialize,       // RP2040_XIAO
-        standard::initialize,       // RP2354
+        pico_w::initialize,       // RP2354 (CYW43439 / Pi Radio Module 2)
     };
 
     static constexpr RunFunc run_func[BOARDS_COUNT] = {
@@ -40,7 +40,7 @@ namespace OGXMini {
         standard::run,          // RP2350_USB_A
         standard::run,          // RP2350_ZERO
         standard::run,          // RP2040_XIAO
-        standard::run,          // RP2354
+        pico_w::run,            // RP2354
     };
 
     static constexpr HostMountedFunc host_mount_func[BOARDS_COUNT] = {
@@ -55,7 +55,7 @@ namespace OGXMini {
         standard::host_mounted,     // RP2350_USB_A
         standard::host_mounted,     // RP2350_ZERO
         standard::host_mounted,     // RP2040_XIAO
-        standard::host_mounted,     // RP2354
+        nullptr,                    // RP2354
     };
 
     static constexpr HostMountedWTypeFunc host_mount_w_type_func[BOARDS_COUNT] = {

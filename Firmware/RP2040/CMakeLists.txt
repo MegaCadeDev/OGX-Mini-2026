@@ -68,6 +68,8 @@ set(SOURCES_BOARD
     ${SRC}/USBDevice/DeviceDriver/PSClassic/PSClassic.cpp
     ${SRC}/USBDevice/DeviceDriver/PS3/PS3.cpp
     ${SRC}/USBDevice/DeviceDriver/PS4/PS4.cpp
+    ${SRC}/USBDevice/DeviceDriver/Steam/Steam.cpp
+    ${SRC}/USBDevice/DeviceDriver/Steam/SteamTouchpad.cpp
     ${SRC}/USBDevice/DeviceDriver/Switch/Switch.cpp
     ${SRC}/USBDevice/DeviceDriver/WiiU/WiiU.cpp
     ${SRC}/USBDevice/DeviceDriver/Wii/Wii.cpp
@@ -220,9 +222,11 @@ elseif(OGXM_BOARD STREQUAL "RP2040_XIAO")
 
 elseif(OGXM_BOARD STREQUAL "RP2354")
     add_compile_definitions(CONFIG_OGXM_BOARD_RP2354=1)
+    set(EN_BLUETOOTH TRUE)
     set(EN_USB_HOST TRUE)
+    set(PICO_BOARD pico2_w)
     set(PICO_PLATFORM rp2350)
-    set(FLASH_SIZE_MB 2)
+    set(FLASH_SIZE_MB 4)
 
 else()
     message(FATAL_ERROR "Invalid OGXM_BOARD value. See options in src/Board/Config.h")
@@ -230,11 +234,11 @@ else()
 endif()
 
 # Optional: default or lock USB output mode.
-# OGXM_FIXED_DRIVER = one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP, PS1PS2, GAMECUBE, DREAMCAST, N64.
+# OGXM_FIXED_DRIVER = one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP, PS1PS2, GAMECUBE, DREAMCAST, N64, PS4, STEAM.
 #   Empty = use first valid driver as default, combos enabled.
 #   Set = use that mode as default (first boot / NVS init). If OGXM_FIXED_DRIVER_ALLOW_COMBOS=OFF (default):
 #     combos disabled, mode locked. If OGXM_FIXED_DRIVER_ALLOW_COMBOS=ON: default is this mode, combos still work.
-set(OGXM_FIXED_DRIVER "" CACHE STRING "Default/lock output mode. One of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP, PS1PS2, GAMECUBE, DREAMCAST, N64. Empty = combos enabled.")
+set(OGXM_FIXED_DRIVER "" CACHE STRING "Default/lock output mode. One of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP, PS1PS2, GAMECUBE, DREAMCAST, N64, PS4, STEAM. Empty = combos enabled.")
 set(OGXM_FIXED_DRIVER_ALLOW_COMBOS OFF CACHE BOOL "If OGXM_FIXED_DRIVER is set: ON = use it as default but allow combos to change mode; OFF = lock to that mode, combos disabled.")
 if(OGXM_FIXED_DRIVER)
     add_compile_definitions(CONFIG_OGXM_FIXED_DRIVER=1)
@@ -270,10 +274,14 @@ if(OGXM_FIXED_DRIVER)
         add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=13)
     elseif(OGXM_FIXED_DRIVER STREQUAL "N64")
         add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=14)
+    elseif(OGXM_FIXED_DRIVER STREQUAL "PS4")
+        add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=15)
+    elseif(OGXM_FIXED_DRIVER STREQUAL "STEAM")
+        add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=16)
     elseif(OGXM_FIXED_DRIVER STREQUAL "WEBAPP")
         add_compile_definitions(OGXM_FIXED_DRIVER_TYPE=100)
     else()
-        message(FATAL_ERROR "OGXM_FIXED_DRIVER must be one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP, PS1PS2, GAMECUBE, DREAMCAST, N64")
+        message(FATAL_ERROR "OGXM_FIXED_DRIVER must be one of: XINPUT, DINPUT, XBOXOG, XBOXOG_SB, XBOXOG_XR, SWITCH, WIIU, WII, PS3, PSCLASSIC, WEBAPP, PS1PS2, GAMECUBE, DREAMCAST, N64, PS4, STEAM")
     endif()
     if(OGXM_FIXED_DRIVER STREQUAL "WII")
         message(STATUS "Wii-only build: ${OGXM_FIXED_DRIVER} (combos disabled, build option only)")
@@ -349,7 +357,7 @@ if(EN_BLUETOOTH)
     )
 
     # Wii mode: Wiimote BT emulator (Pico W/2W with USB host)
-    if(EN_USB_HOST AND (OGXM_BOARD STREQUAL "PI_PICOW" OR OGXM_BOARD STREQUAL "PI_PICO2W"))
+    if(EN_USB_HOST AND (OGXM_BOARD STREQUAL "PI_PICOW" OR OGXM_BOARD STREQUAL "PI_PICO2W" OR OGXM_BOARD STREQUAL "RP2354"))
         message(STATUS "Wii Wiimote lib enabled.")
         list(APPEND SOURCES_BOARD
             ${SRC}/Wii/utils.c
@@ -431,8 +439,13 @@ if(EXISTS ${SRC}/USBDevice/DeviceDriver/XboxOG/tud_xid/tud_xid_xremote_rom.h)
     add_definitions(-DXREMOTE_ROM_AVAILABLE)
 endif()
 
-# RP2040-only: force generic boot2 when no Bluetooth (pico2/pico2_w use board's boot2 choice)
-if(NOT EN_BLUETOOTH AND NOT (OGXM_BOARD STREQUAL "PI_PICO2") AND NOT (OGXM_BOARD STREQUAL "PI_PICO2W"))
+# RP2040-only: force generic boot2 when no Bluetooth (RP2350 boards use platform boot2)
+if(NOT EN_BLUETOOTH
+   AND NOT (OGXM_BOARD STREQUAL "PI_PICO2")
+   AND NOT (OGXM_BOARD STREQUAL "PI_PICO2W")
+   AND NOT (OGXM_BOARD STREQUAL "RP2350_USB_A")
+   AND NOT (OGXM_BOARD STREQUAL "RP2350_ZERO")
+   AND NOT (OGXM_BOARD STREQUAL "RP2354"))
     add_compile_definitions(PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H=1)
     add_compile_definitions(PICO_XOSC_STARTUP_DELAY_MULTIPLIER=64)
 endif()
@@ -462,7 +475,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 
     # Pico W/2W: use UART1 on GP4 (TX) / GP5 (RX) - valid UART pins, avoids PIO USB (GP0/1) in Wii mode
     # Note: GP10/11 are not valid UART pins on RP2040/RP2350
-    if(OGXM_BOARD STREQUAL "PI_PICOW" OR OGXM_BOARD STREQUAL "PI_PICO2W")
+    if(OGXM_BOARD STREQUAL "PI_PICOW" OR OGXM_BOARD STREQUAL "PI_PICO2W" OR OGXM_BOARD STREQUAL "RP2354")
         set(TX_PIN 4)
         set(RX_PIN 5)
     else()

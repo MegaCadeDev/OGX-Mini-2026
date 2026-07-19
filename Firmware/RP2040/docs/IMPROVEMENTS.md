@@ -2,14 +2,248 @@
 
 Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 
-**Version:** From **v1.0.0a3** the version was bumped to **v1.0.0a4** to reflect Wii U controller fixes, Gamecube USB mode, PS3 driver fixes, latency improvements, and Xbox 360 (XInput) support (see below). **v1.0.0.8a+** documents **Pico W / Pico 2 W** work on **DualShock 4 (Classic Bluetooth)** vs **BLE advertising**, **BR inquiry**, and related BT stability (see *Pico W / Pico 2 W — DualShock 4 and Classic Bluetooth* below). **v1.0.0.10a** adds **Nintendo Switch 2** wireless support (**Pro 2** and **Joy-Con 2**) over **BLE**, **Switch 1 Joy-Con L+R merge**, and **Joy-Con dual-half latency fixes** (see *Nintendo Switch 2 — Bluetooth* and *Joy-Con pair merge — latency* below). **v1.0.0.11a** adds **PIO USB host wired connection fixes** — **Switch 1/2 Pro**, **DualShock 3**, **Xbox 360 wireless receiver**, and **Razer Atrox Xbox One** (`1532:0a00`) — validated on **Waveshare RP2350-USB-A** (see *PIO USB host — wired connection fixes* below).
+**Version:** From **v1.0.0a3** the version was bumped to **v1.0.0a4** to reflect Wii U controller fixes, Gamecube USB mode, PS3 driver fixes, latency improvements, and Xbox 360 (XInput) support (see below). **v1.0.0.8a+** documents **Pico W / Pico 2 W** work on **DualShock 4 (Classic Bluetooth)** vs **BLE advertising**, **BR inquiry**, and related BT stability (see *Pico W / Pico 2 W — DualShock 4 and Classic Bluetooth* below). **v1.0.0.10a** adds **Nintendo Switch 2** wireless support (**Pro 2** and **Joy-Con 2**) over **BLE**, **Switch 1 Joy-Con L+R merge**, and **Joy-Con dual-half latency fixes** (see *Nintendo Switch 2 — Bluetooth* and *Joy-Con pair merge — latency* below). **v1.0.0.11a** adds **PIO USB host wired connection fixes** — **Switch 1/2 Pro**, **DualShock 3**, **Xbox 360 wireless receiver**, and **Razer Atrox Xbox One** (`1532:0a00`) — validated on **Waveshare RP2350-USB-A**, plus **STEAM output mode** for **SteamOS / Bazzite** (see *STEAM mode* below). **v1.0.0.12a** adds **PS3 / PS4 motion passthrough**, **Bluetooth disconnect reboot**, **USB resume → restore BT pairing**, **XInput stock stick feel (#38)**, **Switch HD rumble passthrough**, **Switch 2 anti-deadzone / L3–R3 (#64)**, **RP2354 Bluetooth**, **STEAM touchpad-mouse-only**, **Steam Controller 2026 (Triton) BLE**, and **DualShock 3 USB → Bluetooth auto-pair restore** (sync feature **0xF5** after PIO USB wired init; see sections below).
+
+**Version 1.0.0.12a — documented here for release notes:**
+
+- **DualShock 3 — USB → Bluetooth auto-pair restored** — Sync **feature `0xF5`** after **0xF4** + LED (PIO USB sync init had skipped the old async F2→F5 path). See [§ DualShock 3 — automatic USB programming for Bluetooth pairing](#dualshock-3--automatic-usb-programming-for-bluetooth-pairing) and [§ DualShock 3 — wired USB host](#dualshock-3--wired-usb-host).
+- **Steam Controller 2026 (Triton) — Bluetooth** — See [§ Steam Controller 2026 (Triton) — Bluetooth](#steam-controller-2026-triton--bluetooth) below.
+- **PS3 / PS4 output — motion passthrough** — See [§ PS3 / PS4 output — motion passthrough](#ps3--ps4-output--motion-passthrough) below.
+- **Pico W / Pico 2 W — Bluetooth disconnect reboot for clean reconnect** — See [§ Pico W / Pico 2 W — Bluetooth disconnect reboot for clean reconnect](#pico-w--pico-2-w--bluetooth-disconnect-reboot-for-clean-reconnect) below.
+- **USB resume restores pairing scans** — See [§ Pico W / Pico 2 W / RP2354 BT — USB resume restores pairing scans](#pico-w--pico-2-w--rp2354-bt--usb-resume-restores-pairing-scans) below.
+- **XInput / Xbox 360 — stock stick feel (#38)** — See [§ XInput / Xbox 360 — stock stick feel](#xinput--xbox-360--stock-stick-feel) below.
+- **Switch mode — HD rumble passthrough** — See [§ Switch mode — HD rumble passthrough](#switch-mode--hd-rumble-passthrough) below.
+- **Switch 2 Pro — anti-deadzone drift and L3/R3 (#64)** — See [§ Switch 2 Pro — anti-deadzone and L3/R3](#switch-2-pro--anti-deadzone-and-l3r3) below.
+- **RP2354 Bluetooth** — Board profile uses Pico 2 W BT path; see [§ Additional board support](#additional-board-support-rp2350_zero-rp2040_xiao-rp2354).
+- **STEAM mode** — Touchpad → mouse only (no stick-mouse); see [§ STEAM mode](#steam-mode--steamos--bazzite-linux-desktop).
 
 **Version 1.0.0.9a — documented here for release notes:**
 
 - **Bluetooth (Pico W / Pico 2 W):** ~**1 second** haptic **connection rumble** when a wireless controller reaches **device ready** (so you can feel that pairing completed). **DualShock 4** uses a **longer start delay** before rumble (same idea as the existing PS4 FF grace window) so early force-feedback does not destabilize the link. **File:** `src/Bluepad32/Bluepad32.cpp` — `ogxm_play_connection_rumble()` from `device_ready_cb`.
 - **PS3 mode with the adapter plugged into a Windows PC:** **Host output rumble** forwarded to the Bluetooth pad no longer stays on at idle. Windows DInput often sends a **small non-zero** large-motor byte or a **small-motor byte other than 0/1**; the driver now applies a **deadzone** on the large motor and treats the small motor as on **only when the byte is `1`** (DS3 output semantics). **File:** `src/USBDevice/DeviceDriver/PS3/PS3.cpp` — `new_report_out_` path.
 - **Pico W / Pico 2 W — PIO USB wired unplug:** **Reliable disconnect** when the gamepad cable is removed from the adapter’s PIO USB host port (see [§ Pico W / Pico 2 W — PIO USB wired controller unplug detection](#pico-w--pico-2-w--pio-usb-wired-controller-unplug-detection)). **Files:** `src/OGXMini/Board/PicoW.cpp`, `src/USBHost/HostManager.h`.
-- **DualShock 3 — automatic Bluetooth pairing over USB (boards with Bluetooth):** When a **PS3 / DualShock 3** controller is used **wired** on the USB host, after the normal USB HID init the firmware sends **HID feature report `0xF5`** with the adapter’s **local BD_ADDR** (same as [Bluepad32’s sixaxispairer](https://bluepad32.readthedocs.io/en/latest/pair_ds3/)), so the user can **unplug USB** and connect with **PS**. If `uni_local_bd_addr` is not ready yet, pairing is **deferred** until the first reports where the address is valid. **File:** `src/USBHost/HostDriver/PS3/PS3.cpp` (guarded by `CONFIG_EN_BLUETOOTH`).
+- **DualShock 3 — automatic Bluetooth pairing over USB (boards with Bluetooth):** When a **PS3 / DualShock 3** controller is used **wired** on the USB host, right after **0xF4** + LED init the firmware sync-sends **HID feature report `0xF5`** with the adapter’s **local BD_ADDR** (same as [Bluepad32’s sixaxispairer](https://bluepad32.readthedocs.io/en/latest/pair_ds3/)), so the user can **unplug USB** and connect with **PS**. If `uni_local_bd_addr` is not ready yet, pairing is **deferred** until a later report. **(Behavior as of v1.0.0.12a** — sync SET after PIO USB wired init; originally added in 1.0.0.9a.) **File:** `src/USBHost/HostDriver/PS3/PS3.cpp` (guarded by `CONFIG_EN_BLUETOOTH`).
+
+---
+
+## Pico W / Pico 2 W — Bluetooth disconnect reboot for clean reconnect
+
+**Goal:** After a wireless controller fully connects and then disconnects, the next pair must work like a **fresh plug-in** — rumble, inputs, and pairing LED — without unplugging the Pico.
+
+**Problem:** In-place BLE reconnect (especially **Xbox Series / One over BLE**) does not reliably re-run the same path as first connect. Bonded **re-encryption**, leftover **HIDS** client / descriptor state, and scan flags left the adapter in a bad state: LED solid or off, no connection rumble, no gamepad input, until a power cycle.
+
+**Approach:** Treat a successful pad’s disconnect as a full reset of the radio stack, the same way unplugging the Pico does.
+
+| Item | Detail |
+|------|--------|
+| **When** | Last Bluetooth pad that reached **device ready** disconnects (**Home**, **Start+Select**, or link drop) |
+| **Immediate** | Restore **pairing mode**: LED blink + BT scan / new connections enabled |
+| **After ~500 ms** | **Watchdog reboot** (`watchdog_reboot`) — reliable from the BT core (Core1) |
+| **Not when** | Failed pair attempts while already scanning (avoids reboot loops) |
+| **Multi-pad** | No reboot while another BT pad is still connected |
+
+**User flow:** Disconnect pad → LED flashes (pairing) → brief reboot (USB may re-enumerate on the PC) → LED flashes again → press the controller’s connect button → normal first-connect rumble and inputs.
+
+**Files:** `src/Bluepad32/Bluepad32.cpp` (`device_ready_cb` sets `s_bt_slot_was_ready`; `device_disconnected_cb` restores pairing mode and schedules reboot), `src/Board/board_api.cpp` (`board_api::reboot()` via `watchdog_reboot`).
+
+---
+
+## Pico W / Pico 2 W / RP2354 BT — USB resume restores pairing scans
+
+**Goal:** When the adapter stays plugged into a console that **USB-suspends** in standby (e.g. **Xbox 360** soft shutdown via Guide → Turn off console), Bluetooth **BR/EDR inquiry** and **BLE scan** must resume after the host wakes so the user can pair without unplugging the dongle.
+
+**Problem:** With no wireless pad connected, long USB suspend could leave Bluepad32’s “new connections enabled” flag **true** while the radio had **stopped scanning** — LED solid or off, no pairing blink.
+
+**Approach:**
+
+| Item | Detail |
+|------|--------|
+| **USB resume** | `tud_resume_cb` → `bluepad32::on_usb_device_resume()` (marshaled to BT core) → `restore_bt_pairing_mode(-1)` when no BT pad and no PIO wired host pad is active |
+| **Idle watchdog** | Every **45 s** on the BT run loop, restart BR/LE scans if idle and pairing should be active |
+| **No reboot on resume** | Unlike pad disconnect, console wake does **not** trigger watchdog reboot (avoids XSM3 re-auth every standby cycle) |
+| **Wired host release** | `wired_usb_release_enable_bt_pairing()` uses the same scan-restore path (not only `enable_new_connections`, which is a no-op when the flag is already true) |
+
+**Files:** `src/Bluepad32/Bluepad32.cpp`, `src/USBDevice/tud_callbacks.cpp`.
+
+---
+
+## XInput / Xbox 360 — stock stick feel
+
+**Goal:** Controllers used in **Xbox 360 (XInput) mode** — especially modern pads like **Xbox Series / One over Bluetooth** on Pico 2 W — should feel closer to a **stock 360** stick than a near-linear high-precision Series stick ([#38](https://github.com/MegaCadeDev/OGX-Mini-2026/issues/38)).
+
+**Problem:** Default profiles left sticks **uncurved** (`curve=1`, `dz_inner=0`, `uncap_radius=true`). Series pads report tiny physical deflections as strong USB values, so 360 games feel twitchy. A real 360 stick is quieter near center and firmer toward the rim.
+
+**Approach (XInput mode only):**
+
+| Item | Detail |
+|------|--------|
+| **When** | Current output driver is **XInput** and WebApp stick settings are still at defaults (not customized) |
+| **Inner deadzone** | Remapped **~8%** left / **~9%** right (mild — not Microsoft’s ~24% software constant, so games that also deadzone are not double-dulled) |
+| **Curve** | **0.35** (`mag^(1/curve)`): quieter center, steeper outer third |
+| **Uncap** | **Off** — clamp to circular radius like a stock pad |
+| **Override** | Any WebApp stick customization replaces these defaults |
+
+**Files:** `src/UserSettings/JoystickSettings.*`, `src/Gamepad/Gamepad.h`, board `initialize()` (`PicoW.cpp`, `Standard.cpp`, `Four_Channel_I2C.cpp`).
+
+---
+
+## Switch mode — HD rumble passthrough
+
+**Goal:** When OGX-Mini enumerates as a **Switch Pro** controller, console **HD rumble** must reach the **input** pad (especially Bluetooth DualSense / Xbox).
+
+**Problem:** Output reports **`0x01`** / **`0x10`** / **`0x11`** (and related rumble commands) were acknowledged for Switch protocol bookkeeping but never decoded into **`PadOut`**, so wireless pads never vibrated in Switch mode.
+
+**Approach:** Parse left/right HD rumble motor blocks (dekuNukem-style amplitude decode), write **`rumble_l` / `rumble_r`** into `PadOut`, and let Bluepad32 / USB host feedback forward motors to the input controller. Applies to all boards that support Switch output (including Pico 2 W / RP2354 with BT pads).
+
+**Files:** `src/USBDevice/DeviceDriver/Switch/Switch.cpp`, `Switch.h`.
+
+---
+
+## Switch 2 Pro — anti-deadzone and L3/R3
+
+**Goal:** Fix WebApp **anti-deadzone** drift and **L3/R3** mapping on wired **Switch 2 Pro** ([#64](https://github.com/MegaCadeDev/OGX-Mini-2026/issues/64)).
+
+**Problem:** Anti-Deadzone Circular/Square amplified imperfect Switch 2 Pro stick centers into constant bottom-left drift. Circular resize used the wrong WebApp field (`anti_dz_circle` vs `anti_dz_square`). Wired **L3/R3** were mapped to the wrong physical sticks.
+
+**Approach:**
+
+| Item | Detail |
+|------|--------|
+| **Idle gate** | Small noise floor when anti-dz is active (raw magnitude; adaptive with anti-dz strength) |
+| **Circular formula** | Match WebApp (`anti_dz_square` where intended) |
+| **L3/R3** | Correct physical stick clicks on wired Switch 2 Pro |
+| **Profiles** | Joystick settings stay enabled when the saved profile customizes sticks/triggers |
+| **Wired disconnect** | Bulk **keepalive** every **2 s** + USB disable-timeout after Switch 2 bulk bring-up; PIO unmount reboot **debounced 1.5 s** |
+
+**Files:** `Gamepad.h`, `JoystickSettings.*`, `SwitchPro.cpp`, `Standard.cpp`, `Switch2ProHost.cpp`.
+
+---
+
+## STEAM mode — SteamOS / Bazzite (Linux desktop)
+
+**Goal:** On **SteamOS**, **Bazzite**, or other **Linux desktops** (including **Steam Deck** in desktop mode), present a **PS5 DualSense** USB gamepad **and** route the **touchpad** to a separate **HID mouse** so the user can move the desktop cursor without Steam Input remapping.
+
+### Select mode (button combos and build options)
+
+| Method | Detail |
+|--------|--------|
+| **Button combo** | **Start + Left Bumper + D-pad Up** — hold ~3 s; saved to flash; RP2040 resets |
+| **Web app** | Output mode **SteamOS / Bazzite** (value `16`) |
+| **Fixed build** | **`-DOGXM_FIXED_DRIVER=STEAM`** — also option **13** in `scripts/build.sh` / `build.ps1` fixed-mode menu |
+
+**User docs:** [README — SteamOS / Bazzite output mode](../../../README.md#steamos--bazzite-output-mode). **Mappings:** [Controller_Mappings.md — STEAM mode](Controller_Mappings.md#steamos--bazzite-steam-mode).
+
+### DualSense USB emulation
+
+| Item | Detail |
+|------|--------|
+| **USB VID:PID** | `054c:0ce6` (Sony DualSense) |
+| **Interfaces** | IF0: DualSense gamepad (64-byte HID report, ID `0x01`); IF1: relative HID mouse |
+| **DualSense input (BT or wired USB host)** | **`SteamPassthrough`** — full **64-byte** report copied each frame (ControllerMedic-style PS5 passthrough); wired host sticks/triggers taken from raw PS5 IN when available |
+| **Other input (Xbox, DS4, Switch Pro, etc.)** | **`SteamBtReport`** — synthesizes a DualSense **`PS5::InReport`** from PadIn / `uni_gamepad_t` (face → Cross/Circle/Square/Triangle, LB/RB → L1/R1, triggers, sticks, D-pad, Share/Options, PS, touchpad-click bit) |
+| **Descriptors** | `Descriptors/PS5Usb.h` (gamepad), `Descriptors/Steam.h` (composite + mouse interface) |
+
+### Touchpad → mouse
+
+| Item | Detail |
+|------|--------|
+| **Input** | **DualSense (PS5)** — Bluetooth on Pico W / Pico 2 W (`uni_hid_parser_ds5_get_touchpad()`), or wired USB host (`PS5Host::process_report()` → `SteamPassthrough::store()`) |
+| **Output** | **`SteamTouchpad`** — touch finger deltas → **relative mouse** on IF1; touchpad click (`TP` / `MISC`) → **left button** |
+| **Report merge (BT)** | Raw touch bytes merged into USB report offset **33** (`SteamTouchpad::apply_to_passthrough()`) for Linux `hid-playstation` compatibility |
+| **No touchpad** | Mouse interface stays idle — no right-stick mouse fallback |
+
+### How it works (code path)
+
+1. **`SteamDevice::process()`** — Builds the outgoing DualSense USB report (passthrough or synthesized), then sends mouse HID **only** when the input pad has a touchpad.
+2. **Bluetooth** — `SteamBtReport::update_from_uni_gamepad()` + touchpad parser; `Bluepad32.cpp` sets `SteamPassthrough::input_has_touchpad` for DS5.
+3. **Wired USB host** — `PS5Host::process_report()` stores the raw report when output driver is **STEAM**.
+4. **Non-PS5 input** — `SteamBtReport::update_from_gamepad()` / `fill_report_from_pad()` maps any supported PadIn into DualSense layout.
+
+After changing to STEAM mode, **replug** the adapter USB cable on the PC so the composite device (gamepad + mouse) enumerates cleanly.
+
+**Verify on Linux:**
+
+```bash
+lsusb -v -d 054c:0ce6 2>/dev/null | grep -E "iProduct|bNumInterfaces|bEndpointAddress"
+sudo evtest   # select the mouse interface; drag touchpad for REL_X / REL_Y
+```
+
+**Files:** `src/USBDevice/DeviceDriver/Steam/` (`Steam.cpp`, `SteamPassthrough.h`, `SteamBtReport.h`, `SteamTouchpad.cpp`), `src/Descriptors/PS5Usb.h`, `src/Descriptors/Steam.h`, `src/Bluepad32/Bluepad32.cpp`, `src/USBHost/HostDriver/PS5/PS5.cpp`, `WebApp/modules/userSettings.js` (mode label **SteamOS / Bazzite**).
+
+---
+
+## PS3 / PS4 output — motion passthrough
+
+**Goal:** In **PS3** and **PS4 (DualShock 4 USB)** output modes, pass **accelerometer** (and **gyro** when available) from modern input controllers into the emulated report so titles that use tilt / gyro respond correctly. **Switch** output mode does **not** pass through motion for now (Pro report IMU bytes stay zero).
+
+**Important — console wiring (PS3/PS4):** OGX-Mini is a **USB gadget** (it emulates a controller to a **host**). It does **not** replace a Brook-style dongle on its own. To play **motion games on a real PlayStation 3 or PlayStation 4**, chain:
+
+```text
+[Your input pad] → (BT or USB host on OGX-Mini) → OGX-Mini → USB → [USB adapter] → PS3 or PS4
+```
+
+**Tested adapter:** **[Brook Wingman XE 2 Converter](https://www.brookaccessories.com/products/wingman-xe2)** — validated for **PS3** Sixaxis titles with OGX-Mini in **PS3 output mode**. The same Brook adapter also works on **PS4**: set OGX-Mini to **PS4 output mode** (**Start + Left Bumper + D-pad Left**), plug OGX-Mini into the Brook, and connect the Brook to the **PS4** USB port.
+
+| Item | Detail |
+|------|--------|
+| **Output modes** | **PS3** (Start + D-pad Left) — Sixaxis in the DS3 report; **PS4** (Start + LB + D-pad Left) — Brook-style accel/gyro in the DS4 report |
+| **Input — Bluetooth (Pico W / Pico 2 W)** | **DualShock 4**, **DualSense**, **Switch Pro**, **Wii Remote** (accel only; **0x31** report requested when motion output is active) |
+| **Input — wired USB host** | **DualShock 4**, **DualSense**, **Switch 1 Pro**, **Switch 2 Pro** (IMU parsed from full HID payload) |
+| **Wii Remote hold** | Point **IR end toward the TV**; roll/pitch tuned for that orientation |
+| **Wii Motion Plus gyro** | Not yet parsed from extension reports — accel only from Wii Remote |
+| **PC / emulator testing** | Motion is also present when OGX-Mini is in PS3/PS4 mode on a **PC** (no Brook required) |
+
+### How it works
+
+1. **`Gamepad::PadIn`** — `accel[3]`, `gyro[3]`, and `motion_source` tag the active IMU (`MOTION_SRC_DS4`, `DS5`, `SWITCH_PRO`, `SWITCH_USB`, `DS4_USB`, `DS5_USB`, `WII_BT`, etc.).
+2. **`MotionImu.h`** — Unit conversion for USB Switch/DS4/DS5 payloads; **`remap_to_ds4_playing_frame()`** rotates Switch Pro and Wii BT samples into the DS4/Sixaxis playing frame (+Z ≈ 1 G when level).
+3. **`PS3.cpp`** — `apply_pad_imu_to_ps3_sixaxis()` encodes accel into Linux **hid-sony** Sixaxis layout (X @ 41–42, Y/Z swapped per kernel); **Wii** uses a dedicated pitch/gravity wire assignment.
+4. **`PS4.cpp`** — Brook-style accel/gyro scaling into the 64-byte DS4 gadget report when `has_motion()`.
+5. **`MotionOutputActive`** — PS3/PS4 drivers set a flag so Bluepad32 can request Wii accel reports without `WII_MODE_ACCEL` (that mode breaks button layouts).
+6. **`Bluepad32.cpp`** — Maps DS4/DS5/Switch/Wii motion from Bluepad reports; on connect requests **continuous** Wii **0x31** (DRM_KA) or **0x35** (DRM_KAE with Nunchuk) when motion output is active. Nunchuk stick → **left stick**. `uni_hid_parser_wii.c` implements **DRM_KAE** parsing.
+
+**Files:** `src/Gamepad/MotionImu.h`, `src/Gamepad/Gamepad.h`, `src/USBDevice/DeviceDriver/PS3/PS3.cpp`, `src/USBDevice/DeviceDriver/PS4/PS4.cpp`, `src/USBDevice/DeviceDriver/MotionOutputActive.h`, `src/USBDevice/DeviceManager.cpp`, `src/Bluepad32/Bluepad32.cpp`, `src/USBHost/HostDriver/SwitchPro/SwitchPro.cpp`, `src/USBHost/HostDriver/SwitchPro/Switch2ProHost.cpp`, `src/USBHost/HostDriver/PS4/PS4.cpp`, `src/USBHost/HostDriver/PS5/PS5.cpp`.
+
+**User docs:** [README — Motion controls](../../../README.md#ps3--ps4-motion-controls).
+
+**Button mappings (all modes):** [Controller_Mappings.md](Controller_Mappings.md)
+
+---
+
+## Steam Controller 2026 (Triton) — Bluetooth
+
+**Goal:** Pair the **Steam Controller 2026** (Valve “Triton”) over **Bluetooth LE** to **Pico W**, **Pico 2 W**, and **RP2354** (Pi Radio Module 2) adapters and use it as a normal gamepad input in any USB or GPIO output mode.
+
+| Variant | VID:PID | Role |
+|---------|---------|------|
+| Body USB | `28de:1302` | Wired USB (host stack — not this feature) |
+| Body BLE | `28de:1303` | **Wireless input target** |
+| Puck dongle | `28de:1304` | Valve RF puck (PID registered) |
+| Nereid | `28de:1305` | Related PID (registered) |
+
+**Advertisement / services (validated on Linux):** Appearance **`0x03c4`** (gamepad), HID UUID **`00001812`**, Valve vendor service **`100f6c32-…`**, Modalias **`usb:v28DEp1303`**. Address type is typically **random**.
+
+Unlike the original Steam Controller (custom GATT only), Triton also exposes **standard HID-over-GATT**. Main input report ID **`0x45`** (`TritonMTUNoQuat_t`: buttons, hall triggers, dual sticks, trackpads). Feature report **ID 1** + message **`0x87`** disables **lizard mode** (desktop mouse/keyboard), refreshed about every **3 s**. Rumble uses output report **`0x80`** (`MsgHapticRumble`) with a **~40 ms** resend while active.
+
+### Pairing (user)
+
+1. **Remove** the controller from any PC/phone Bluetooth list and make sure it is **disconnected** (BLE is one host at a time).
+2. Put OGX-Mini in pairing mode (LED blinking).
+3. On the controller, hold **RB + B + Steam** until it advertises.
+4. Wait for connection rumble / solid LED. **Do not** pair the pad in Windows/macOS/phone Bluetooth settings for OGX use.
+
+### Changes
+
+1. **Bluepad32 parser** — `uni_hid_parser_steam_triton.c` / `.h`: decode **`0x45`** / **`0x42`** / **`0x47`** state reports, battery **`0x43`**, lizard-off + rumble, teardown of timers on disconnect.
+2. **Controller type** — `k_eControllerType_SteamControllerTriton` (**61**); PIDs **`0x1302`–`0x1305`** in `uni_controller_list.h`.
+3. **LE Secure Connections** — Triton rejects legacy SMP with **`AUTH_REQUIREMENTS_MISMATCH`**. Enabled **`ENABLE_LE_SECURE_CONNECTIONS`** in `Firmware/RP2040/src/btstack_config.h`. Non–Xbox / non–Switch-2 BLE pads pair with **`SM_AUTHREQ_SECURE_CONNECTION | SM_AUTHREQ_BONDING`** (`uni_bt_le.c`); one Just-Works retry if AuthReq still mismatches.
+4. **Connection interval** — On setup, request **6–9 × 1.25 ms (~7.5–11 ms)** like Xbox BLE (default intervals feel very laggy).
+5. **Button map** — Face / LB/RB / L3/R3 / d-pad / triggers as normal. Triton **View → Start**, **Menu → Back/Select** (matches SDL; printed names are not Xbox View/Menu). **Steam** (and QAM) → **Guide / SYS**. Grip paddles L4/L5/R4/R5 left unmapped.
+6. **OGX path** — Rumble routed in `Bluepad32.cpp`; stall-watchdog exemption so idle HID does not force-disconnect.
+
+**References:** [SDL3 `SDL_hidapi_steam_triton.c`](https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_steam_triton.c), [`controller_structs.h`](https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/steam/controller_structs.h).
+
+**Files:** `uni_hid_parser_steam_triton.c` / `.h`, `btstack_config.h`, `uni_bt_le.c`, `uni_controller_type.h`, `uni_controller_list.h`, `uni_hid_device.c`, `uni_gamepad.c`, `Bluepad32.cpp`.
 
 ---
 
@@ -161,9 +395,10 @@ Applies to Nintendo VID **0x057E** PIDs **0x2066**, **0x2067**, **0x2069**, **0x
 
 1. **Host OUT report layout** — **`init_host_out_report()`** builds the **USB Host Shield `PS3_REPORT_BUFFER`** layout (player LED bitmap **`0x02 << player`**, per-LED timing fields) instead of copying gadget **`DEFAULT_OUT_REPORT`**.
 2. **Synchronous wired init** — On plug-in: **SET feature 0xF4** `{0x42, 0x0c, 0x00, 0x00}` then **synchronous OUT** (rumble/LED report) via **`send_control_xfer_wait()`**, polling **`pio_usb_host_frame()` + `tuh_task()`** up to **150 ms** per step.
-3. **Immediate input** — Wired path sets **`reports_enabled`** and **`InitStage::DONE`** after enable + LED OUT; **`tuh_hid_receive_report()`** starts without waiting on the old multi-stage **GET feature 0xF2** chain (that chain remains for **Bluetooth auto-pair** on `CONFIG_EN_BLUETOOTH` builds only).
-4. **PIO keepalive** — **`KEEPALIVE_MS = 1000`** on USB host sends periodic neutral OUT so the DS3 stays connected when idle; **`HostManager`** includes PS3 in periodic **`send_feedback()`**.
-5. **Async OUT for rumble** — Runtime rumble/keepalive uses non-blocking **`send_control_output_async()`** so feedback does not stall IN.
+3. **Immediate input** — Wired path sets **`reports_enabled`** after enable + LED OUT (and BT **0xF5** when applicable); **`tuh_hid_receive_report()`** starts without the old multi-stage **GET feature 0xF2** chain.
+4. **Bluetooth auto-pair (BT boards)** — After **0xF4** + LED, **`program_ds3_bt_host()`** sync-sends **feature 0xF5** with the adapter BD_ADDR (see section below).
+5. **PIO keepalive** — **`KEEPALIVE_MS = 1000`** on USB host sends periodic neutral OUT so the DS3 stays connected when idle; **`HostManager`** includes PS3 in periodic **`send_feedback()`**.
+6. **Async OUT for rumble** — Runtime rumble/keepalive uses non-blocking **`send_control_output_async()`** so feedback does not stall IN.
 
 **File:** `src/USBHost/HostDriver/PS3/PS3.cpp`, `PS3.h`.
 
@@ -319,6 +554,9 @@ Descriptors and XSM3 flow are aligned with [joypad-os](https://github.com/joypad
    **Fix:** Ignore large-motor values **below a small threshold** (deadzone), and treat the **small motor as on only when the host byte is `1`** (not “any non-zero”).  
    **File:** `PS3.cpp` — block that runs when `new_report_out_` is set after `set_report_cb` parses the DS3 output report.
 
+8. **Sixaxis / motion passthrough** *(v1.0.0.12a)*  
+   When the input gamepad provides IMU data (`has_motion()`), accel/gyro are encoded into the DS3 Sixaxis fields using Linux **hid-sony** wire layout. See [§ PS3 / PS4 output — motion passthrough](#ps3--ps4-output--motion-passthrough) for supported input pads, Wii Remote notes, and **Brook Wingman XE 2** console wiring.
+
 ---
 
 ## Latency reduction
@@ -423,7 +661,7 @@ Three additional boards use the same Standard (PIO-USB host) code path as PI_PIC
 |-------|--------------|--------|
 | Waveshare RP2350-Zero | `OGXM_BOARD=RP2350_ZERO` | PIO USB D+ = GP10, RGB = GP16; RP2350. |
 | Seeed Studio XIAO RP2040 | `OGXM_BOARD=RP2040_XIAO` | PIO USB D+ = GP0, RGB = GP12, LED = GP17. |
-| RP2354 | `OGXM_BOARD=RP2354` | PIO USB D+ = GP0, LED = GP25; RP2350. |
+| RP2354 | `OGXM_BOARD=RP2354` | **RP2350 + Pi Radio Module 2** (CYW43439, same class as **Pico 2 W**): **Bluetooth** wireless pads + PIO USB host on **GP0/GP1**, LED **GP25**. |
 
 **Files:** `src/Board/Config.h` (board IDs and pin defines), `src/OGXMini/OGXMini.cpp` (init/run/host_mounted tables), `src/OGXMini/Board/Standard.cpp` (extended `#if`), `CMakeLists.txt` (board branches).
 
@@ -469,7 +707,9 @@ After debounced confirmation, **`pico_w_usb_host_full_stop()`** runs **`tuh_dein
 
 **Background:** The **DualShock 3** does not implement standard Bluetooth pairing. The host’s **BD_ADDR** must be written to the pad over **USB** using a **HID feature report** (report ID **`0xF5`**, 8 bytes: id + padding + 6-byte MAC). This is what the [Bluepad32 sixaxispairer](https://bluepad32.readthedocs.io/en/latest/pair_ds3/) utility does from a PC.
 
-**Behavior in this firmware:** On builds with **`CONFIG_EN_BLUETOOTH`** (e.g. **Pico W / Pico 2 W**, ESP32 hybrids with Bluepad32), after the existing **PS3 USB init** (`GET_REPORT` **0xF2** sequence) completes, **`PS3Host`** sends **`SET_REPORT`** **feature 0xF5** with **`uni_bt_get_local_bd_addr_safe()`**, then continues with the usual rumble **OUT** report. If the local address is still **all zeros** (Bluetooth stack not finished starting), the code sets a **deferred** flag and **`try_deferred_ds3_bt_pair()`** runs at the start of **`process_report()`** until the address is valid, then sends **0xF5** once.
+**Behavior in this firmware:** On builds with **`CONFIG_EN_BLUETOOTH`** (e.g. **Pico W / Pico 2 W / RP2354**), after sync wired init (**feature 0xF4** + LED OUT), **`PS3Host::program_ds3_bt_host()`** sends **`SET_REPORT`** **feature 0xF5** with **`uni_bt_get_local_bd_addr_safe()`** using the same **synchronous control path** as **0xF4** (so PIO USB host frames complete the transfer). If the local address is still **all zeros**, a **deferred** flag is set and **`try_deferred_ds3_bt_pair()`** retries from **`process_report()`** until the address is valid, then sends **0xF5** once.
+
+**Regression note:** An earlier PIO USB wired-init change marked init complete before the old async **GET 0xF2 → SET 0xF5** chain ran, so **`0xF5` was never sent**. Pairing no longer depends on that F2 chain.
 
 **User steps:** Plug the **DS3 into the adapter’s USB host port** (wait for it to work wired if you like), then **unplug** and press **PS** to use it wirelessly — same as the manual pairing flow documented for Bluepad32.
 
@@ -616,15 +856,19 @@ OGX-Mini’s existing **wired Xbox One GIP** path (`tuh_xinput`, subclass `0x47`
 
 | Area | Improvement |
 |------|-------------|
-| **XInput (360)** | XSM3 authentication and descriptors aligned with joypad-os; adapter works on Xbox 360 with BT controllers (PS5, Xbox One). **360 wireless PC receiver** supported (`Xbox360WHost`). **v1.0.0.11a:** PIO USB wired receiver — **4 XInput instances** when `MAX_GAMEPADS=1`, port **priming**, **0x80** connect detect, byte-offset decode. **Razer Atrox XBO** (`1532:0a00`) — vendor GIP arcade path via **XBOFS** init + **30-byte** IN + XBOFS input layout; **POWER_ON** once only. **Xbox One/Series wireless dongle (`045e:02e6` / `02fe`)** — see [Future planned](#future-planned). 8BitDo wired fix: LED keepalive for VID 0x2DC8 / PID 0x3016 or 0x3106. |
-| **PS3** | Stuck inputs and delays addressed via L2/R2 axes; DS3-accurate sticks (0–255, center 0x80, ~1.5% deadzone); D-pad and face button mapping; Home (PS) button with 8-frame latch for BT controllers. **v1.0.0.9a:** PC host rumble deadzone + strict small-motor `0`/`1`. **v1.0.0.11a:** **DualShock 3 wired USB host** — USB Host Shield init, sync control xfer + PIO service, **1 Hz keepalive**. |
+| **XInput (360)** | XSM3 authentication and descriptors aligned with joypad-os; adapter works on Xbox 360 with BT controllers (PS5, Xbox One). **360 wireless PC receiver** supported (`Xbox360WHost`). **v1.0.0.11a:** PIO USB wired receiver — **4 XInput instances** when `MAX_GAMEPADS=1`, port **priming**, **0x80** connect detect, byte-offset decode. **Razer Atrox XBO** (`1532:0a00`) — vendor GIP arcade path via **XBOFS** init + **30-byte** IN + XBOFS input layout; **POWER_ON** once only. **Xbox One/Series wireless dongle (`045e:02e6` / `02fe`)** — see [Future planned](#future-planned). 8BitDo wired fix: LED keepalive for VID 0x2DC8 / PID 0x3016 or 0x3106. **v1.0.0.12a (#38):** default (non–WebApp-customized) sticks use **stock 360-like** feel — see [§ XInput stock stick feel](#xinput--xbox-360--stock-stick-feel). |
+| **PS3** | Stuck inputs and delays addressed via L2/R2 axes; DS3-accurate sticks (0–255, center 0x80, ~1.5% deadzone); D-pad and face button mapping; Home (PS) button with 8-frame latch for BT controllers. **v1.0.0.9a:** PC host rumble deadzone + strict small-motor `0`/`1`. **v1.0.0.11a:** **DualShock 3 wired USB host** — USB Host Shield init, sync control xfer + PIO service, **1 Hz keepalive**. **v1.0.0.12a:** motion passthrough (see Motion row); **DS3 USB→BT auto-pair** sync **0xF5** restored on BT boards. |
 | **PS2 (GPIO)** | Home only = IGR (L1+L2+R1+R2+Start+Select); Home+Start = shutdown (L1+L2+R1+R2+L3+R3). OPL and protocol stability (first response byte = mode byte). |
 | **OG Xbox** | Guide only = IGR. Shutdown = LT+RT+Back+White via **Guide+Start** or **Guide+View (Back)**; Xbox BT often omits Start while Guide is held. Shutdown report strips Start so the chord matches BIOS/softmod expectations. |
-| **Switch Pro** | Analog stick sensitivity gain (default 1.2×) for more responsive sticks; configurable in `Switch.cpp`. **v1.0.0.11a:** **Switch 1/2 Pro wired** on PIO USB host — Chromium **0x80** init, bulk bring-up, mapping fixes. See [§ PIO USB host — wired connection fixes](#pio-usb-host--wired-connection-fixes-waveshare-rp2350-usb-a). |
-| **Switch 2** | **Pro 2** (wired **0x2069**): **Switch2ProHost** + bulk bring-up (v1.0.0.11a). **Pro 2 + Joy-Con 2 L/R** (BLE): **uni_hid_parser_switch2** — GATT pairing, 63-byte input, rumble keepalive, Home → SYS latch, **L+R pair merge**, **dual-half latency fixes**. See [§ Nintendo Switch 2 — Bluetooth](#nintendo-switch-2--bluetooth-pico-w--pico-2-w) and [§ Joy-Con pair latency](#joy-con-pair-merge--latency-when-both-halves-are-active). |
-| **Boards** | RP2350_ZERO, RP2040_XIAO, RP2354 supported (Standard/PIO-USB host path). **RP2350-USB-A (Waveshare):** v1.0.0.11a validation for **Switch Pro, DualShock 3, 360 wireless receiver**, and **Razer Atrox XBO** wired host. |
+| **Switch Pro** | Analog stick sensitivity gain (default 1.2×) for more responsive sticks; configurable in `Switch.cpp`. **v1.0.0.11a:** **Switch 1/2 Pro wired** on PIO USB host — Chromium **0x80** init, bulk bring-up, mapping fixes. **v1.0.0.12a:** **HD rumble** from console → `PadOut` for BT/USB input pads. See [§ Switch HD rumble](#switch-mode--hd-rumble-passthrough) and [§ PIO USB host — wired connection fixes](#pio-usb-host--wired-connection-fixes-waveshare-rp2350-usb-a). |
+| **Switch 2** | **Pro 2** (wired **0x2069**): **Switch2ProHost** + bulk bring-up (v1.0.0.11a). **Pro 2 + Joy-Con 2 L/R** (BLE): **uni_hid_parser_switch2** — GATT pairing, 63-byte input, rumble keepalive, Home → SYS latch, **L+R pair merge**, **dual-half latency fixes**. **v1.0.0.12a (#64):** anti-deadzone idle gate + L3/R3 / wired disconnect keepalives. See [§ Nintendo Switch 2 — Bluetooth](#nintendo-switch-2--bluetooth-pico-w--pico-2-w), [§ Joy-Con pair latency](#joy-con-pair-merge--latency-when-both-halves-are-active), [§ anti-deadzone](#switch-2-pro--anti-deadzone-and-l3r3). |
+| **Steam Controller 2026** | **Triton BLE** (`28de:1303`) on Pico W / Pico 2 W / RP2354 — HOGP parser, **LE Secure Connections**, lizard-off, rumble, **~7.5–11 ms** conn interval, View→Start / Menu→Back. See [§ Steam Controller 2026](#steam-controller-2026-triton--bluetooth). |
+| **Boards** | RP2350_ZERO, RP2040_XIAO supported (Standard/PIO-USB host). **RP2354:** RP2350 + **Pi Radio Module 2** — **Bluetooth** + PIO USB host (Pico 2 W firmware path). **RP2350-USB-A (Waveshare):** v1.0.0.11a validation for **Switch Pro, DualShock 3, 360 wireless receiver**, and **Razer Atrox XBO** wired host. |
 | **Latency** | Main loop delay default **0 µs**; `tud_task()` before `process()` so reports send every loop when ready; XInput/Switch/PS3 send latest state when USB ready (no `new_pad_in()` gate). Switch Pro and PS3 always build report every loop so host poll (`get_report`) and IN push both see current state — only remaining delay is BT radio when wireless. |
-| **Build** | Interactive scripts `scripts/build.sh` (Linux/macOS) and `scripts/build.ps1` (Windows) for board selection, fixed/default mode, and Release/Debug; output in `scripts/build/`. See [README](../../../README.md) Build section. |
-| **Bluetooth (Pico W)** | **DS4 / Classic ACL:** BLE advertising **paused** while Classic pad connected; **BR inquiry stopped** during ACL; **no DS4 virtual mouse**; **6 s PS4 rumble** grace. **Xbox Series (BLE):** no stall disconnect when idle; keepalive 12 s; stale-slot delete on reconnect. **Switch 2 (BLE):** Pro 2 + Joy-Con 2 L/R — custom GATT parser, rumble keepalive, Home latch, **L+R merge**, **dual-half latency fixes**. **Switch 1 Joy-Con (Classic BT):** L+R merge, IMU off when paired, same latency path as SW2. **General:** `sleep_ms(1)` main loop; lock-free BT pad-in (**2-slot** staging for Joy-Con pairs); re-enable scan on last disconnect. **v1.0.0.9a:** ~**1 s connection rumble** at `device_ready` (DS4 delayed start). |
+| **STEAM (SteamOS / Bazzite)** | **Start + LB + D-pad Up** (~3 s), web app, or **`-DOGXM_FIXED_DRIVER=STEAM`**. USB **DualSense** (`054c:0ce6`) + **HID mouse**. **DualSense input:** passthrough report + **touchpad → mouse** (BT or wired USB host). **Other pads:** synthesized DualSense report; **no stick-mouse fallback**. See [§ STEAM mode](#steam-mode--steamos--bazzite-linux-desktop). |
+| **Motion (PS3/PS4 out)** | **v1.0.0.12a:** Accel/gyro passthrough into emulated DS3/DS4 from DS4/DS5/Switch Pro/SW2/Wii Remote. Console use needs **Brook Wingman XE 2** (or similar). See [§ motion passthrough](#ps3--ps4-output--motion-passthrough). |
+| **Build** | Interactive scripts `scripts/build.sh` (Linux/macOS) and `scripts/build.ps1` (Windows) for board selection, fixed/default mode (**STEAM**, PS4, Wii, etc.), and Release/Debug; output in `scripts/build/`. See [README](../../../README.md) Build section. |
+| **Bluetooth (Pico W / 2 W / RP2354)** | **DS4 / Classic ACL:** BLE advertising **paused** while Classic pad connected; **BR inquiry stopped** during ACL; **no DS4 virtual mouse**; **6 s PS4 rumble** grace. **Xbox Series (BLE):** no stall disconnect when idle; keepalive 12 s. **v1.0.0.12a:** after last **ready** pad disconnects, restore pairing mode then **watchdog reboot** (~500 ms); **USB resume** + **45 s** idle scan watchdog restore pairing without reboot; **LE Secure Connections** for pads that require it (e.g. Triton); **Steam Controller 2026** HOGP parser. **Switch 2 (BLE):** Pro 2 + Joy-Con 2 L/R — custom GATT parser, rumble keepalive, Home latch, **L+R merge**, **dual-half latency fixes**. **Switch 1 Joy-Con (Classic BT):** L+R merge, IMU off when paired. **General:** `sleep_ms(1)` main loop; lock-free BT pad-in (**2-slot** staging for Joy-Con pairs). **v1.0.0.9a:** ~**1 s connection rumble** at `device_ready` (DS4 delayed start). |
 | **PIO USB host (Pico W)** | **Wired unplug:** Debounced combo of **HCD connect**, **`tuh_mounted` over all device addresses**, and **no `process_report` / setup activity** (~**3 s**) so disconnect registers when D+/D− line state is wrong under PIO; **`tuh_deinit`** + restore GPIO line IRQs + BT release. **v1.0.0.11a (all PIO host boards):** **`pio_usb_host_frame()`** after feedback OUT; wired **Switch Pro / PS3 / 360 receiver / Razer Atrox XBO** connection fixes — see [§ PIO USB host — wired connection fixes](#pio-usb-host--wired-connection-fixes-waveshare-rp2350-usb-a). |
-| **DS3 + Bluetooth** | **USB auto-pair:** After PS3 wired init, **feature `0xF5`** programs the **DS3** with the adapter’s **BD_ADDR** (`CONFIG_EN_BLUETOOTH`); deferred if BT address not ready. See [§ DualShock 3 — automatic USB programming for Bluetooth pairing](#dualshock-3--automatic-usb-programming-for-bluetooth-pairing). |
+| **DS3 + Bluetooth** | **USB auto-pair:** After sync **0xF4** + LED, **feature `0xF5`** programs the **DS3** with the adapter’s **BD_ADDR** (`CONFIG_EN_BLUETOOTH`); deferred if BT address not ready. **v1.0.0.12a:** restored after PIO USB wired-init regression (sync SET, no F2 chain). See [§ DualShock 3 — automatic USB programming for Bluetooth pairing](#dualshock-3--automatic-usb-programming-for-bluetooth-pairing). |
+| **Multi-adapter (same console)** | **Known limitation:** Two OGX-Mini units plugged into the **same** console usually collide — identical **VID/PID**, shared USB serial (e.g. XInput `"1.0"`), and on **Xbox 360** the same **XSM3 ID**. Workarounds without firmware changes: **one OGX + one native/other-brand pad**, or a **single multi-port** host (e.g. 360 wireless receiver). Unique per-unit identity is not implemented yet. |

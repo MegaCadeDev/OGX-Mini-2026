@@ -21,6 +21,7 @@ enum class DeviceDriverType : uint8_t
     DREAMCAST, // Dreamcast controller over Maple Bus GPIO (no USB device; output/input to console)
     N64,       // N64 controller over GPIO (single wire; no USB device; output to N64 console)
     PS4,       // DualShock 4 USB HID (CUH-ZCT1x-class descriptor)
+    STEAM,     // SteamOS/Bazzite: DualSense USB gamepad + HID mouse (touchpad passthrough)
     WEBAPP = 100,
     UART_BRIDGE
 };

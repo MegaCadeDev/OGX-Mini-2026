@@ -61,6 +61,8 @@ The adapter can emulate three Wiimote “shapes” that many games support. You 
 
 Mappings assume an **Xbox-style** USB gamepad (A/B/X/Y, Start, Back, Guide, D-pad, bumpers, triggers, two sticks). Other USB pads are mapped to the same logical layout by the host driver.
 
+For the **full mapping reference** (all output modes, Bluetooth inputs including **Wii Remote vertical**, Switch Pro swaps, PS3/PS4, etc.), see **[Controller_Mappings.md](Controller_Mappings.md)**.
+
 ### No Extension (Wiimote only)
 
 | Wiimote     | USB gamepad   |

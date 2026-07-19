@@ -424,7 +424,7 @@ void four_ch_i2c::initialize() {
     board_api::init_board();
 
     for (uint8_t i = 0; i < MAX_GAMEPADS; ++i) {
-        _gamepads[i].set_profile(user_settings.get_profile_by_index(i));
+        _gamepads[i].set_profile(user_settings.get_profile_by_index(i), user_settings.get_current_driver());
     }
 
     DeviceManager::get_instance().initialize_driver(user_settings.get_current_driver(), _gamepads);

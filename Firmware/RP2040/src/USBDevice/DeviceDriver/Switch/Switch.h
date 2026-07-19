@@ -27,6 +27,8 @@ private:
     void build_standard_report(const SwitchPro::SwitchReport& sw);
     void build_subcommand_reply(const SwitchPro::SwitchReport& sw);
     void set_timer();
+    /** Decode HD rumble from a console output report into rumble_l_/rumble_r_. */
+    void parse_host_rumble(uint8_t report_id, uint8_t const* buffer, uint16_t bufsize);
 
     std::array<uint8_t, SwitchPro::REPORT_SIZE> report_{};
     SwitchPro::SwitchReport switch_report_{};
@@ -39,6 +41,11 @@ private:
     uint8_t vibration_idx_ = 0;
     bool vibration_enabled_ = false;
     std::array<uint8_t, 6> addr_ = { 0x7C, 0xBB, 0x8A, 0x12, 0x34, 0x56 };
+
+    // Latest rumble decoded from host 0x01/0x10/0x11 output; applied in process().
+    uint8_t rumble_l_ = 0;
+    uint8_t rumble_r_ = 0;
+    bool rumble_dirty_ = false;
 
     // USB init handshake: reply to 0x80 0x01 (MAC), 0x80 0x02 (handshake), 0x80 0x04/0x05 (timeout)
     std::array<uint8_t, SwitchPro::USB_INIT_REPORT_SIZE> report_81_{};

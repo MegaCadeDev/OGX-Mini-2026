@@ -2,6 +2,7 @@
 #include <algorithm>
 
 #include "pico/time.h"
+#include "Gamepad/MotionImu.h"
 #include "USBDevice/DeviceDriver/PS3/PS3.h"
 
 namespace {
@@ -17,9 +18,13 @@ void apply_pad_imu_to_ps3_sixaxis(PS3::InReport& rep, const Gamepad::PadIn& gp_i
     constexpr int32_t kDs3CountsPerG = 113;
     constexpr int32_t kGyroPerDps = 1024;
 
-    int32_t ax = gp_in.accel[0];
-    int32_t ay = gp_in.accel[1];
-    int32_t az = gp_in.accel[2];
+    int32_t accel[3] = {gp_in.accel[0], gp_in.accel[1], gp_in.accel[2]};
+    int32_t gyro[3] = {gp_in.gyro[0], gp_in.gyro[1], gp_in.gyro[2]};
+    MotionImu::remap_to_ds4_playing_frame(gp_in.motion_source, accel, gyro);
+
+    int32_t ax = accel[0];
+    int32_t ay = accel[1];
+    int32_t az = accel[2];
 
     auto iabs = [](int32_t v) -> int64_t {
         const int64_t w = static_cast<int64_t>(v);
@@ -55,15 +60,27 @@ void apply_pad_imu_to_ps3_sixaxis(PS3::InReport& rep, const Gamepad::PadIn& gp_i
         return static_cast<uint16_t>(raw);
     };
 
+    const bool wii_imu = gp_in.motion_source == Gamepad::PadIn::MOTION_SRC_WII_BT;
+
     const uint16_t raw_x = encode_accel(ax, false);
-    const uint16_t raw_z_wire = encode_accel(az, true);
-    const uint16_t raw_y_wire = encode_accel(ay, true);
+    /* Linux hid-sony: report Z bytes → kernel ABS_Z, report Y bytes → kernel ABS_Y.
+     * Real DS3 neutral gravity is on ABS_Y; Wii pitch was on ay and gravity on az in
+     * DS4 frame — swap wires so gravity lands on acceler_z (kernel Y). */
+    uint16_t raw_z_wire;
+    uint16_t raw_y_wire;
+    if (wii_imu) {
+        raw_z_wire = encode_accel(ay, true);
+        raw_y_wire = encode_accel(az, true);
+    } else {
+        raw_z_wire = encode_accel(az, true);
+        raw_y_wire = encode_accel(ay, true);
+    }
 
     rep.acceler_x = __builtin_bswap16(raw_x);
     rep.acceler_y = __builtin_bswap16(raw_z_wire);
     rep.acceler_z = __builtin_bswap16(raw_y_wire);
 
-    int32_t gz = static_cast<int32_t>((static_cast<int64_t>(gp_in.gyro[2]) * 511) / (kGyroPerDps * 64));
+    int32_t gz = static_cast<int32_t>((static_cast<int64_t>(gyro[2]) * 511) / (kGyroPerDps * 64));
     if (gz > 511) {
         gz = 511;
     }
@@ -242,10 +259,7 @@ void PS3Device::process(const uint8_t idx, Gamepad& gamepad)
             report_in_.l1_axis = (gp_in.buttons & Gamepad::BUTTON_LB) ? 0xFF : 0;
         }
 
-        /* Sixaxis only when IMU is parsed for DS4/DS5 BT or Switch Pro (not other pads or USB PS5). */
-        if (gp_in.motion_source == Gamepad::PadIn::MOTION_SRC_DS4 ||
-            gp_in.motion_source == Gamepad::PadIn::MOTION_SRC_DS5 ||
-            gp_in.motion_source == Gamepad::PadIn::MOTION_SRC_SWITCH_PRO) {
+        if (gp_in.has_motion()) {
             apply_pad_imu_to_ps3_sixaxis(report_in_, gp_in);
         }
     }

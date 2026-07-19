@@ -3,7 +3,7 @@
 
 #include "Board/Config.h"
 
-#if (OGXM_BOARD == PI_PICOW) && defined(CONFIG_EN_USB_HOST)
+#if defined(OGXM_BOARD_USES_PICO_W_FIRMWARE) && defined(CONFIG_EN_USB_HOST)
 
 class Gamepad;
 

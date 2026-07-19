@@ -121,15 +121,12 @@ static const HardwareID DINPUT_IDS[] =
     {0x0F0D, 0x0011}, // Hori Real Arcade Pro 3
     {0x0F0D, 0x0026}, // Hori Real Arcade Pro 3P
     {0x0F0D, 0x004B}, // Hori Real Arcade Pro 3W
-    {0x0F0D, 0x006A}, // Hori Real Arcade Pro 4
-    {0x0F0D, 0x006B}, // Hori Real Arcade Pro 4
-    {0x0F0D, 0x008A}, // Hori Real Arcade Pro 4
-    {0x0F0D, 0x008B}, // Hori Real Arcade Pro 4
+    // RAP4 PS3 (0x006A/0x006B) are in PS3_IDS. RAP4/RAP4 Kai PS4 (0x008A/0x008B) are in PS4_IDS.
+    // RAP4 PC/XInput (0x008C) is unlisted so tuh_xinput or HIDGeneric can claim it.
     {0x0F0D, 0x006F}, // Hori Real Arcade Pro 4 VLX
     {0x0F0D, 0x0070}, // Hori Real Arcade Pro 4 VLX
     {0x0F0D, 0x003D}, // Hori Real Arcade Pro N3
     {0x0F0D, 0x00AE}, // Hori Real Arcade Pro N4
-    {0x0F0D, 0x008C}, // Hori Real Arcade Pro P4
     {0x0F0D, 0x00AA}, // Hori Real Arcade Pro S
     {0x0F0D, 0x00D8}, // Hori Real Arcade Pro S
     {0x0F0D, 0x0022}, // Hori Real Arcade Pro V3
@@ -169,23 +166,10 @@ static const HardwareID DINPUT_IDS[] =
     {0x3507, 0x0004}, // Zenaim Arcade Controller
     {0x1C1A, 0x0100}, // Datel Arcade Joystick
     {0x0E6F, 0x0185}, // PDP Fightpad Pro GameCube
-    // PowerA (PC/Xbox-style from SDL_GameControllerDB; Switch PowerA are in SWITCH_WIRED_IDS)
-    {0x20D6, 0xA711}, // PowerA Core Controller (HID/DInput; same VID:PID as OpenSteamController emulation)
-    {0x20D6, 0x4033}, // PowerA OPS Pro Wireless Controller
-    {0x20D6, 0x4026}, // PowerA OPS Wireless Controller
-    {0x20D6, 0xCA6D}, // PowerA Pro Ex
-    {0x24C6, 0x543A}, // PowerA Xbox One (Mac/HID)
-    {0x20D6, 0x4050}, // PowerA Advantage Xbox Series (Linux/HID)
-    {0x20D6, 0x4001}, // PowerA Fusion Pro 2 (Linux/HID)
-    {0x24C6, 0x531A}, // PowerA Mini Pro Ex (Linux/HID)
-    {0x20D6, 0x2002}, // PowerA Xbox One Controller (Linux/HID)
-    {0x20D6, 0x2828}, // PowerA Xbox One Controller (Linux/HID)
-    {0x24C6, 0x581A}, // PowerA Xbox One (Linux/HID)
-    {0x20D6, 0x4002}, // PowerA Xbox One Spectra Infinity (Linux/HID)
-    {0x20D6, 0x2050}, // PowerA Xbox Series Controller (Linux/HID)
-    {0x20D6, 0x2064}, // PowerA Xbox Series X Wired Controller (e.g. Red)
-    {0x20D6, 0x200B}, // PowerA Xbox Series Controller (Linux/HID)
-    {0x20D6, 0x200F}, // PowerA Xbox Series Controller (Linux/HID)
+    // PowerA Switch-mode pads are in SWITCH_WIRED_IDS (SwitchWiredHost).
+    // PowerA Xbox/PC pads are intentionally *not* listed here: DInputHost uses a fixed
+    // PS3-style report layout. On Sakura's minimal ID list these fall through to HIDGeneric
+    // (descriptor parse) or tuh_xinput — both work. Forcing DINPUT breaks them.
     // Elecom (from SDL_GameControllerDB)
     {0x056E, 0x200A}, // Elecom DUX60 MMO
     {0x056E, 0x2003}, // Elecom U3613M
@@ -293,6 +277,8 @@ static const HardwareID PS3_IDS[] =
     {0x0F0D, 0x0051}, // Hori Fighting Commander PS3
     {0x0F0D, 0x0088}, // Hori Fighting Stick mini 4 PS3
     {0x0F0D, 0x006E}, // Horipad 4 PS3
+    {0x0F0D, 0x006A}, // Hori Real Arcade Pro 4 PS3
+    {0x0F0D, 0x006B}, // Hori Real Arcade Pro 4 PS3 (alt)
     {0x0E6F, 0x0124}, // Injustice Fightstick PS3
     {0x0079, 0x0002}, // King PS3
     {0x0738, 0x8838}, // Mad Catz Arcade Fightstick TE S+ PS3
@@ -334,6 +320,8 @@ static const HardwareID PS4_IDS[] =
     {0x2563, 0x0357}, // MPOW Wired Gamepad (ShenZhen ShanWan)
     {0x0F0D, 0x005E}, // Hori Fighting Commander 4 PS4
     {0x0F0D, 0x00EE}, // Hori PS4 Mini (PS4-099U)
+    {0x0F0D, 0x008A}, // Hori Real Arcade Pro 4 / RAP4 Kai (PS4 mode)
+    {0x0F0D, 0x008B}, // Hori Real Arcade Pro 4 (PS4 mode alt)
     {0x1F4F, 0x1002}, // ASW GG Xrd controller
     {0x9886, 0x0025}, // Astro C40 TR PS4
     {0x20D6, 0x792A}, // BDA PS4 Fightpad

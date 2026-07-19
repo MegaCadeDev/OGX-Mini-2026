@@ -1,6 +1,6 @@
 #include "Board/Config.h"
 #include "OGXMini/Board/Standard.h"
-#if ((OGXM_BOARD == PI_PICO) || (OGXM_BOARD == RP2040_ZERO) || (OGXM_BOARD == ADAFRUIT_FEATHER) || (OGXM_BOARD == RP2350_USB_A) || (OGXM_BOARD == RP2350_ZERO) || (OGXM_BOARD == RP2040_XIAO) || (OGXM_BOARD == RP2354))
+#if ((OGXM_BOARD == PI_PICO) || (OGXM_BOARD == RP2040_ZERO) || (OGXM_BOARD == ADAFRUIT_FEATHER) || (OGXM_BOARD == RP2350_USB_A) || (OGXM_BOARD == RP2350_ZERO) || (OGXM_BOARD == RP2040_XIAO))
 
 #include <pico/multicore.h>
 #include <pico/time.h>
@@ -33,6 +33,9 @@ static repeating_timer_t s_pio_usb_sof_timer;
 static bool s_pio_usb_sof_hw_timer = false;
 /** Set during intentional mode-change reboot so host_mounted(false) does not queue a second teardown. */
 static std::atomic<bool> s_driver_reboot_pending{false};
+/** Debounce transient PIO USB umount before tearing down the USB device stack. */
+static std::atomic<bool> s_host_teardown_scheduled{false};
+constexpr uint32_t HOST_UNMOUNT_DEBOUNCE_MS = 1500;
 
 static void pio_usb_sof_timer_stop() {
     if (!s_pio_usb_sof_hw_timer) {
@@ -164,16 +167,32 @@ void standard::host_mounted(bool host_mounted) {
     }
 
     if (!host_mounted && tud_is_inited.load() && !s_driver_reboot_pending.load()) {
-        TaskQueue::Core0::queue_task([]() {
-            OGXM_LOG("USB disconnected, rebooting.\n");
-            board_api::usb::disconnect_all();
-            board_api::reboot();
-        });
-    } else if (!tud_is_inited.load()) {
-        TaskQueue::Core0::queue_task([]() {
-            tud_init(BOARD_TUD_RHPORT);
-            tud_is_inited.store(true);
-        });
+        if (!s_host_teardown_scheduled.exchange(true)) {
+            TaskQueue::Core0::queue_delayed_task(
+                TaskQueue::Core0::get_new_task_id(),
+                HOST_UNMOUNT_DEBOUNCE_MS,
+                false,
+                []() {
+                    s_host_teardown_scheduled.store(false);
+                    if (s_driver_reboot_pending.load()) {
+                        return;
+                    }
+                    if (HostManager::get_instance().any_mounted()) {
+                        return;
+                    }
+                    OGXM_LOG("USB disconnected, rebooting.\n");
+                    board_api::usb::disconnect_all();
+                    board_api::reboot();
+                });
+        }
+    } else if (host_mounted) {
+        s_host_teardown_scheduled.store(false);
+        if (!tud_is_inited.load()) {
+            TaskQueue::Core0::queue_task([]() {
+                tud_init(BOARD_TUD_RHPORT);
+                tud_is_inited.store(true);
+            });
+        }
     }
 }
 
@@ -184,7 +203,7 @@ void standard::initialize() {
     user_settings.initialize_flash();
 
     for (uint8_t i = 0; i < MAX_GAMEPADS; ++i) {
-        _gamepads[i].set_profile(user_settings.get_profile_by_index(i));
+        _gamepads[i].set_profile(user_settings.get_profile_by_index(i), user_settings.get_current_driver());
     }
 
     DeviceManager::get_instance().initialize_driver(user_settings.get_current_driver(), _gamepads);
@@ -313,4 +332,4 @@ void standard::run() {
 // void standard::initialize() {}
 // void standard::run() {}
 
-#endif // PI_PICO || RP2040_ZERO || ADAFRUIT_FEATHER || RP2350_USB_A || RP2350_ZERO || RP2040_XIAO || RP2354
+#endif // PI_PICO || RP2040_ZERO || ADAFRUIT_FEATHER || RP2350_USB_A || RP2350_ZERO || RP2040_XIAO

@@ -3,7 +3,11 @@
 #include "host/usbh.h"
 #include "class/hid/hid_host.h"
 
+#include "USBDevice/DeviceDriver/DeviceDriverTypes.h"
+#include "USBDevice/DeviceDriver/Steam/SteamPassthrough.h"
+#include "USBDevice/DeviceManager.h"
 #include "USBHost/HostDriver/PS5/PS5.h"
+#include "Gamepad/MotionImu.h"
 
 void PS5Host::initialize(Gamepad& gamepad, uint8_t address, uint8_t instance, const uint8_t* report_desc, uint16_t desc_len) 
 {
@@ -81,11 +85,16 @@ void PS5Host::process_report(Gamepad& gamepad, uint8_t address, uint8_t instance
     if (in_report->buttons[1] & PS5::Buttons1::SHARE)    gp_in.buttons |= gamepad.MAP_BUTTON_BACK;
     if (in_report->buttons[1] & PS5::Buttons1::OPTIONS)  gp_in.buttons |= gamepad.MAP_BUTTON_START;
     if (in_report->buttons[2] & PS5::Buttons2::PS)       gp_in.buttons |= gamepad.MAP_BUTTON_SYS;
-    if (in_report->buttons[2] & PS5::Buttons2::TP)       gp_in.buttons |= gamepad.MAP_BUTTON_MISC;  // Touchpad press
-    if (in_report->buttons[2] & PS5::Buttons2::MUTE)     gp_in.buttons |= gamepad.MAP_BUTTON_MISC;  // Mute button
-    // Touchpad finger touch (no click) – report has two points
-    if (in_report->points[0].touching || in_report->points[1].touching)
+    if (in_report->buttons[2] & PS5::Buttons2::MUTE)     gp_in.buttons |= gamepad.MAP_BUTTON_MISC;
+
+    if (DeviceManager::get_instance().get_driver_type() == DeviceDriverType::STEAM) {
+        SteamPassthrough::input_has_touchpad = true;
+        SteamPassthrough::store(report, len);
+    }
+
+    if (in_report->points[0].touching || in_report->points[1].touching) {
         gp_in.buttons |= gamepad.MAP_BUTTON_MISC;
+    }
 
     gp_in.trigger_l = gamepad.scale_trigger_l(in_report->trigger_l);
     gp_in.trigger_r = gamepad.scale_trigger_r(in_report->trigger_r);
@@ -93,12 +102,9 @@ void PS5Host::process_report(Gamepad& gamepad, uint8_t address, uint8_t instance
     std::tie(gp_in.joystick_lx, gp_in.joystick_ly) = gamepad.scale_joystick_l(in_report->joystick_lx, in_report->joystick_ly);
     std::tie(gp_in.joystick_rx, gp_in.joystick_ry) = gamepad.scale_joystick_r(in_report->joystick_rx, in_report->joystick_ry);
 
-    /* DualSense USB: map motion for PS3 gadget path (same int16 sensor layout as DS5 HID). */
+    /* DualSense USB: normalize raw HID IMU to Bluepad DS4 units for PS3/PS4 gadget output. */
     gp_in.motion_source = Gamepad::PadIn::MOTION_SRC_DS5_USB;
-    for (int i = 0; i < 3; i++) {
-        gp_in.accel[i] = static_cast<int32_t>(static_cast<int16_t>(in_report->accel[i]));
-        gp_in.gyro[i] = static_cast<int32_t>(static_cast<int16_t>(in_report->gyro[i]));
-    }
+    MotionImu::fill_from_ds5_usb_raw(gp_in.accel, gp_in.gyro, in_report->accel, in_report->gyro);
 
     gamepad.set_pad_in(gp_in);
 

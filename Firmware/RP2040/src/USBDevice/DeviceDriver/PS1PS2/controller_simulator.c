@@ -9,7 +9,7 @@
 #include "psxSPI.pio.h"
 #include "USBDevice/DeviceDriver/PS1PS2/psx_simulator.h"
 
-#if defined(CONFIG_OGXM_BOARD_PI_PICOW) || defined(CONFIG_OGXM_BOARD_PI_PICO2W)
+#if defined(CONFIG_OGXM_BOARD_PI_PICOW) || defined(CONFIG_OGXM_BOARD_PI_PICO2W) || defined(CONFIG_OGXM_BOARD_RP2354)
 /* Pico W / Pico 2 W: do not use GPIO IRQ for PIN_SEL; CYW43 uses gpio_add_raw_irq_handler and conflicts. */
 #define PSX_DEVICE_POLLED_SEL 1
 #else

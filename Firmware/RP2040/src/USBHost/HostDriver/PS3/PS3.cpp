@@ -80,30 +80,27 @@ bool PS3Host::local_bt_addr_is_nonzero(const uint8_t addr[6]) {
     return false;
 }
 
-void PS3Host::bt_pair_complete_cb(tuh_xfer_s* xfer) {
-    auto* init_state = reinterpret_cast<InitState*>(xfer->user_data);
-    if (init_state == nullptr) {
-        return;
+bool PS3Host::program_ds3_bt_host(uint8_t address) {
+    uni_bt_bd_addr_t addr{};
+    uni_bt_get_local_bd_addr_safe(addr);
+    if (!local_bt_addr_is_nonzero(addr)) {
+        return false;
     }
-    init_state->stage = InitStage::DONE;
-    init_state->reports_enabled = true;
-    send_control_output_async(init_state->dev_addr, init_state->out_report);
+    bt_pair_buf_[0] = 0xF5;
+    bt_pair_buf_[1] = 0;
+    std::memcpy(bt_pair_buf_.data() + 2, addr, 6);
+    /* Sync transfer: PIO USB needs pio_usb_host_frame() while control completes. */
+    (void)send_control_xfer_wait(address, &BT_MAC_FEATURE_REQUEST, bt_pair_buf_.data(), 150u);
+    return true;
 }
 
 void PS3Host::try_deferred_ds3_bt_pair(uint8_t address) {
     if (!ds3_bt_pair_deferred_) {
         return;
     }
-    uni_bt_bd_addr_t addr{};
-    uni_bt_get_local_bd_addr_safe(addr);
-    if (!local_bt_addr_is_nonzero(addr)) {
-        return;
+    if (program_ds3_bt_host(address)) {
+        ds3_bt_pair_deferred_ = false;
     }
-    ds3_bt_pair_deferred_ = false;
-    bt_pair_buf_[0] = 0xF5;
-    bt_pair_buf_[1] = 0;
-    std::memcpy(bt_pair_buf_.data() + 2, addr, 6);
-    (void)send_control_xfer(address, &BT_MAC_FEATURE_REQUEST, bt_pair_buf_.data(), nullptr, 0);
 }
 #endif
 
@@ -159,26 +156,6 @@ bool PS3Host::send_control_output_async(uint8_t address, PS3::OutReport* report)
     return send_control_xfer(address, &RUMBLE_REQUEST, reinterpret_cast<uint8_t*>(report), nullptr, 0);
 }
 
-void PS3Host::send_init_get_report(InitState* init_state)
-{
-    if (init_state == nullptr)
-    {
-        return;
-    }
-
-    tusb_control_request_t init_request =
-    {
-        .bmRequestType = 0xA1,
-        .bRequest = 0x01, // GET_REPORT
-        .wValue = (HID_REPORT_TYPE_FEATURE << 8) | 0xF2,
-        .wIndex = 0x0000,
-        .wLength = (init_state->stage == InitStage::RESP3) ? static_cast<uint16_t>(8) : static_cast<uint16_t>(17)
-    };
-
-    send_control_xfer(init_state->dev_addr, &init_request, init_state->init_buffer.data(), get_report_complete_cb,
-                      reinterpret_cast<uintptr_t>(init_state));
-}
-
 void PS3Host::initialize(Gamepad& gamepad, uint8_t address, uint8_t instance, const uint8_t* report_desc, uint16_t desc_len) 
 {
     (void)report_desc;
@@ -187,13 +164,8 @@ void PS3Host::initialize(Gamepad& gamepad, uint8_t address, uint8_t instance, co
     gamepad.set_analog_host(true);
 
     init_host_out_report(out_report_, idx_);
-
-    init_state_ = InitState{};
-    init_state_.out_report = &out_report_;
-    init_state_.dev_addr = address;
-    init_state_.usb_instance = instance;
+    reports_enabled_ = false;
 #if defined(CONFIG_EN_BLUETOOTH)
-    init_state_.defer_bt_pair = &ds3_bt_pair_deferred_;
     ds3_bt_pair_deferred_ = false;
 #endif
 
@@ -202,70 +174,18 @@ void PS3Host::initialize(Gamepad& gamepad, uint8_t address, uint8_t instance, co
     (void)send_control_xfer_wait(address, &ENABLE_USB_REQUEST, enable_usb_data, 150u);
     (void)send_control_output_sync(address, &out_report_);
 
-    init_state_.reports_enabled = true;
-    init_state_.stage = InitStage::DONE;
+#if defined(CONFIG_EN_BLUETOOTH)
+    /* Program master BD_ADDR so the pad can reconnect wirelessly after unplug (sixaxispairer).
+     * Must run here — the old GET 0xF2 async chain was skipped once wired init marked DONE. */
+    if (!program_ds3_bt_host(address)) {
+        ds3_bt_pair_deferred_ = true;
+    }
+#endif
+
+    reports_enabled_ = true;
     last_keepalive_ms_ = time_us_32() / 1000;
 
-#if defined(CONFIG_EN_BLUETOOTH)
-    send_init_get_report(&init_state_);
-#endif
-
     tuh_hid_receive_report(address, instance);
-}
-
-void PS3Host::get_report_complete_cb(tuh_xfer_s *xfer)
-{
-    InitState* init_state = reinterpret_cast<InitState*>(xfer->user_data);
-    if (init_state == nullptr || init_state->stage == InitStage::DONE)
-    {
-        return;
-    }
-
-    if (xfer->result != XFER_RESULT_SUCCESS)
-    {
-        if (init_state->init_retries < MAX_INIT_RETRIES)
-        {
-            ++init_state->init_retries;
-            send_init_get_report(init_state);
-        }
-        return;
-    }
-    init_state->init_retries = 0;
-
-    switch (init_state->stage)
-    {
-        case InitStage::RESP1:
-            init_state->stage = InitStage::RESP2;
-            send_init_get_report(init_state);
-            break;
-        case InitStage::RESP2:
-            init_state->stage = InitStage::RESP3;
-            send_init_get_report(init_state);
-            break;
-        case InitStage::RESP3:
-#if defined(CONFIG_EN_BLUETOOTH)
-        {
-            uni_bt_bd_addr_t addr{};
-            uni_bt_get_local_bd_addr_safe(addr);
-            if (local_bt_addr_is_nonzero(addr)) {
-                init_state->bt_pair_report[0] = 0xF5;
-                init_state->bt_pair_report[1] = 0;
-                std::memcpy(init_state->bt_pair_report.data() + 2, addr, 6);
-                send_control_xfer(init_state->dev_addr, &BT_MAC_FEATURE_REQUEST, init_state->bt_pair_report.data(), bt_pair_complete_cb, xfer->user_data);
-                break;
-            }
-            if (init_state->defer_bt_pair != nullptr) {
-                *init_state->defer_bt_pair = true;
-            }
-        }
-#endif
-            init_state->stage = InitStage::DONE;
-            init_state->reports_enabled = true;
-            send_control_output_async(init_state->dev_addr, init_state->out_report);
-            break;
-        default:
-            break;
-    }
 }
 
 void PS3Host::process_report(Gamepad& gamepad, uint8_t address, uint8_t instance, const uint8_t* report, uint16_t len)
@@ -329,7 +249,7 @@ bool PS3Host::send_feedback(Gamepad& gamepad, uint8_t address, uint8_t instance)
 {
     (void)instance;
 
-    if (!init_state_.reports_enabled) {
+    if (!reports_enabled_) {
         return false;
     }
 

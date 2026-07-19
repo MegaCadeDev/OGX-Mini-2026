@@ -7,9 +7,8 @@
 
 /**
  * Nintendo Switch 2 Pro Controller (USB PID 0x2069): same bulk bring-up + HID init as SwitchProHost.
- * Decoding is **InReport only** (10-byte payload). Matching on bytes 10 / 16–17 (IMU + stick coupling)
- * caused random presses and flicker on hardware — do not reintroduce without stable fields or debounce
- * tuned on-device.
+ * Decoding is **InReport only** (10-byte payload) for buttons/sticks. IMU bytes after the
+ * 10-byte payload are parsed separately for PS3/PS4 motion output (no button coupling).
  */
 class Switch2ProHost : public SwitchProHost
 {

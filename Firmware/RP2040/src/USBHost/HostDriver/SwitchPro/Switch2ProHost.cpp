@@ -7,6 +7,7 @@
 #include "USBHost/HostDriver/SwitchPro/Switch2ProHost.h"
 
 #include "Board/ogxm_log.h"
+#include "Gamepad/MotionImu.h"
 
 namespace {
 
@@ -95,7 +96,8 @@ void Switch2ProHost::process_report(Gamepad& gamepad, uint8_t address, uint8_t i
     }
 
     const SwitchPro::InReport* in_report = reinterpret_cast<const SwitchPro::InReport*>(payload);
-    if (std::memcmp(&prev_in_report_.buttons, in_report->buttons, 9) == 0)
+    if (std::memcmp(&prev_in_report_.buttons, in_report->buttons, 9) == 0 &&
+        MotionImu::switch_usb_imu_unchanged(prev_imu_, payload, payload_len))
     {
         tuh_hid_receive_report(address, instance);
         return;
@@ -123,14 +125,14 @@ void Switch2ProHost::process_report(Gamepad& gamepad, uint8_t address, uint8_t i
     if (br & (1U << 4))
         gp_in.buttons |= gamepad.MAP_BUTTON_RB;
 
-    // Right byte: classic R / ZR are Start and stick R3 on this device.
+    // Right byte: classic R is Start; classic ZR bit is stick L3 on Switch 2 Pro (not R3).
     if (br & SwitchPro::Buttons0::R)
         gp_in.buttons |= gamepad.MAP_BUTTON_START;
     if (br & SwitchPro::Buttons0::ZR)
-        gp_in.buttons |= gamepad.MAP_BUTTON_R3;
+        gp_in.buttons |= gamepad.MAP_BUTTON_L3;
 
     // Bit 5 in misc byte: hardware ZL digital (capture: 00 20 00 vs released; classic CAPTURE bit).
-    // Bit 5 in first byte: hardware ZR / RT digital (capture: 20 00 00 vs released; classic ZR is bit 7 → R3).
+    // Bit 5 in first byte: hardware ZR / RT digital (capture: 20 00 00 vs released).
     // Analog travel may exist elsewhere in the 64-byte report; these are full-digital paths.
     const bool zl_on = (bm & (1U << 5)) != 0;
     const bool zr_on = (br & (1U << 5)) != 0;
@@ -139,12 +141,12 @@ void Switch2ProHost::process_report(Gamepad& gamepad, uint8_t address, uint8_t i
     if (bm & (1U << 6))
         gp_in.buttons |= gamepad.MAP_BUTTON_BACK;
 
-    // Bit 7 in misc byte: hardware L3 (capture: 00 80 00 vs released; not classic Buttons1::L3 bit 2).
+    // Bit 7 in misc byte: hardware R3 (was mapped to L3; swapped to match physical sticks).
     if (bm & (1U << 7))
-        gp_in.buttons |= gamepad.MAP_BUTTON_L3;
+        gp_in.buttons |= gamepad.MAP_BUTTON_R3;
 
     // "Misc" byte: d-pad uses some classic − / + / L3 / R3 bit positions; L uses the Home bit.
-    // L3 here is d-pad left (capture: 00 04 00); stick L3 is bm bit 7 above.
+    // L3 here is d-pad left (capture: 00 04 00); stick R3 is bm bit 7 above.
     if (bm & SwitchPro::Buttons1::MINUS)
         gp_in.dpad |= gamepad.MAP_DPAD_DOWN;
     if (bm & SwitchPro::Buttons1::L3)
@@ -177,8 +179,22 @@ void Switch2ProHost::process_report(Gamepad& gamepad, uint8_t address, uint8_t i
     std::tie(gp_in.joystick_rx, gp_in.joystick_ry) =
         gamepad.scale_joystick_r(normalize_axis(joy_rx), normalize_axis(joy_ry), true);
 
+    if (payload_len >= 22) {
+        gp_in.motion_source = Gamepad::PadIn::MOTION_SRC_SWITCH_USB;
+        MotionImu::fill_from_switch_usb_payload(gp_in.accel, gp_in.gyro, payload, payload_len);
+    }
+
     gamepad.set_pad_in(gp_in);
     std::memcpy(&prev_in_report_, in_report, sizeof(SwitchPro::InReport));
+    if (payload_len >= 22) {
+        constexpr uint16_t kInReportSize = 10;
+        constexpr uint16_t kImuSampleSize = sizeof(MotionImu::SwitchImuSample);
+        uint16_t imu_off = kInReportSize;
+        if (payload_len >= kInReportSize + (3 * kImuSampleSize)) {
+            imu_off = static_cast<uint16_t>(kInReportSize + (2 * kImuSampleSize));
+        }
+        std::memcpy(prev_imu_, payload + imu_off, sizeof(prev_imu_));
+    }
 
     tuh_hid_receive_report(address, instance);
 }

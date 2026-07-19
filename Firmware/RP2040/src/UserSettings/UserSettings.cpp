@@ -14,9 +14,20 @@ static constexpr uint32_t BUTTON_COMBO(const uint16_t& buttons, const uint8_t& d
     return (static_cast<uint32_t>(buttons) << 16) | static_cast<uint32_t>(dpad);
 }
 
+/** Required buttons/dpad pressed (extra face buttons or triggers do not block the combo). */
+static bool combo_matches(uint32_t current, uint32_t expected)
+{
+    const uint16_t req_buttons = static_cast<uint16_t>(expected >> 16);
+    const uint16_t cur_buttons = static_cast<uint16_t>(current >> 16);
+    const uint8_t req_dpad = static_cast<uint8_t>(expected & 0xFF);
+    const uint8_t cur_dpad = static_cast<uint8_t>(current & 0xFF);
+    return ((cur_buttons & req_buttons) == req_buttons) && (cur_dpad == req_dpad);
+}
+
 namespace ButtonCombo {
     static constexpr uint32_t PS3       = BUTTON_COMBO(Gamepad::BUTTON_START, Gamepad::DPAD_LEFT);
     static constexpr uint32_t PS4       = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_LB, Gamepad::DPAD_LEFT);
+    static constexpr uint32_t STEAM     = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_LB, Gamepad::DPAD_UP);
     static constexpr uint32_t DINPUT    = BUTTON_COMBO(Gamepad::BUTTON_START | Gamepad::BUTTON_RB, Gamepad::DPAD_LEFT);
     static constexpr uint32_t XINPUT    = BUTTON_COMBO(Gamepad::BUTTON_START, Gamepad::DPAD_UP);
     static constexpr uint32_t SWITCH    = BUTTON_COMBO(Gamepad::BUTTON_START, Gamepad::DPAD_DOWN);
@@ -40,6 +51,7 @@ static constexpr DeviceDriverType VALID_DRIVER_TYPES[] = {
     DeviceDriverType::XINPUT,
     DeviceDriverType::PS3,
     DeviceDriverType::PS4,
+    DeviceDriverType::STEAM,
     DeviceDriverType::PSCLASSIC, 
     DeviceDriverType::WIIU,
     DeviceDriverType::WII,
@@ -65,6 +77,7 @@ static constexpr DeviceDriverType VALID_DRIVER_TYPES[] = {
     DeviceDriverType::WEBAPP,
     DeviceDriverType::PS3,
     DeviceDriverType::PS4,
+    DeviceDriverType::STEAM,
     DeviceDriverType::PSCLASSIC,
     DeviceDriverType::PS1PS2,
     DeviceDriverType::GAMECUBE,
@@ -84,7 +97,7 @@ struct ComboMap {
 };
 
 // GAMECUBE and N64 are build-only (fixed driver), not in combo map; use -DOGXM_FIXED_DRIVER=GAMECUBE or N64.
-static constexpr std::array<ComboMap, 13> BUTTON_COMBO_MAP = {{
+static constexpr std::array<ComboMap, 14> BUTTON_COMBO_MAP = {{
     { ButtonCombo::XBOXOG,    DeviceDriverType::XBOXOG    },
     { ButtonCombo::XBOXOG_SB, DeviceDriverType::XBOXOG_SB },
     { ButtonCombo::XBOXOG_XR, DeviceDriverType::XBOXOG_XR },
@@ -95,10 +108,33 @@ static constexpr std::array<ComboMap, 13> BUTTON_COMBO_MAP = {{
     { ButtonCombo::XINPUT,    DeviceDriverType::XINPUT    },
     { ButtonCombo::PS3,       DeviceDriverType::PS3       },
     { ButtonCombo::PS4,       DeviceDriverType::PS4       },
+    { ButtonCombo::STEAM,     DeviceDriverType::STEAM     },
     { ButtonCombo::PSCLASSIC, DeviceDriverType::PSCLASSIC },
     { ButtonCombo::PS1PS2,    DeviceDriverType::PS1PS2    },
     { ButtonCombo::DREAMCAST, DeviceDriverType::DREAMCAST },
 }};
+
+/** Prefer the combo that requires the most buttons (e.g. STEAM over XInput when LB is held). */
+static uint32_t find_matching_combo(uint32_t current)
+{
+    uint32_t best = 0;
+    uint8_t best_button_count = 0;
+    for (const auto& entry : BUTTON_COMBO_MAP) {
+        if (!combo_matches(current, entry.combo)) {
+            continue;
+        }
+        const uint16_t req = static_cast<uint16_t>(entry.combo >> 16);
+        uint8_t count = 0;
+        for (uint16_t bit = req; bit != 0; bit &= static_cast<uint16_t>(bit - 1)) {
+            ++count;
+        }
+        if (count >= best_button_count) {
+            best_button_count = count;
+            best = entry.combo;
+        }
+    }
+    return best;
+}
 
 const std::string UserSettings::INIT_FLAG_KEY()
 {
@@ -147,15 +183,17 @@ bool UserSettings::check_for_driver_change(Gamepad& gamepad)
     return false;  // Fixed output build: combos disabled
 #else
     Gamepad::PadIn gp_in = gamepad.get_pad_in();
-    static uint32_t last_button_combo = BUTTON_COMBO(gp_in.buttons, gp_in.dpad);
+    static uint32_t last_button_combo = 0;
     static uint8_t call_count = 0;
 
-    uint32_t current_button_combo = BUTTON_COMBO(gp_in.buttons, gp_in.dpad);
+    const uint32_t current_button_combo = BUTTON_COMBO(gp_in.buttons, gp_in.dpad);
+    const uint32_t active_combo = find_matching_combo(current_button_combo);
 
     if (!(current_button_combo & (static_cast<uint32_t>(Gamepad::BUTTON_START) << 16)) ||
-        last_button_combo != current_button_combo)
+        active_combo == 0 ||
+        last_button_combo != active_combo)
     {
-        last_button_combo = current_button_combo;
+        last_button_combo = active_combo;
         call_count = 0;
         return false;
     }
@@ -173,7 +211,7 @@ bool UserSettings::check_for_driver_change(Gamepad& gamepad)
 
     for (const auto& combo_map : BUTTON_COMBO_MAP)
     {
-        if (combo_map.combo == current_button_combo && is_valid_driver(combo_map.driver))
+        if (combo_map.combo == active_combo && is_valid_driver(combo_map.driver))
         {
             new_driver = combo_map.driver;
             break;

@@ -1,6 +1,6 @@
 #include "Board/Config.h"
 #include "OGXMini/Board/PicoW.h"
-#if (OGXM_BOARD == PI_PICOW)
+#if defined(OGXM_BOARD_USES_PICO_W_FIRMWARE)
 
 #include <cstdio>
 #include <string>
@@ -426,7 +426,7 @@ void pico_w::initialize() {
 #endif
 
     for (uint8_t i = 0; i < MAX_GAMEPADS; ++i) {
-        _gamepads[i].set_profile(user_settings.get_profile_by_index(i));
+        _gamepads[i].set_profile(user_settings.get_profile_by_index(i), user_settings.get_current_driver());
     }
 
     DeviceManager& device_manager = DeviceManager::get_instance();
@@ -600,9 +600,6 @@ void pico_w::run() {
     }
 }
 
-// #else // (OGXM_BOARD == PI_PICOW)
+// #else // OGXM_BOARD_USES_PICO_W_FIRMWARE
 
-// void pico_w::initialize() {}
-// void pico_w::run() {}
-
-#endif // (OGXM_BOARD == PI_PICOW)
+#endif // OGXM_BOARD_USES_PICO_W_FIRMWARE

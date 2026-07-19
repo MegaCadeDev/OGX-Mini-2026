@@ -9,6 +9,9 @@
 #include "USBDevice/DeviceDriver/DInput/DInput.h"
 #include "USBDevice/DeviceDriver/PS3/PS3.h"
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
+#include "USBDevice/DeviceDriver/Steam/Steam.h"
+#include "USBDevice/DeviceDriver/Steam/SteamActive.h"
+#include "USBDevice/DeviceDriver/MotionOutputActive.h"
 #include "USBDevice/DeviceDriver/XboxOG/XboxOG_GP.h"
 #include "USBDevice/DeviceDriver/XboxOG/XboxOG_SB.h"
 #include "USBDevice/DeviceDriver/XboxOG/XboxOG_XR.h"
@@ -28,6 +31,9 @@ void DeviceManager::initialize_driver(  DeviceDriverType driver_type,
     //TODO: Put gamepad setup in the drivers themselves
     bool has_analog = false;
     current_driver_type_ = driver_type;
+    SteamActive::set(driver_type == DeviceDriverType::STEAM);
+    MotionOutputActive::set(driver_type == DeviceDriverType::PS3 ||
+                            driver_type == DeviceDriverType::PS4);
 
     printf("Attempting to allocate driver\n");
     
@@ -46,6 +52,11 @@ void DeviceManager::initialize_driver(  DeviceDriverType driver_type,
             printf("PS4 Loaded\n");
             has_analog = true;
             device_driver_ = std::make_unique<PS4Device>();
+            break;
+        case DeviceDriverType::STEAM:
+            printf("STEAM Loaded\n");
+            has_analog = true;
+            device_driver_ = std::make_unique<SteamDevice>();
             break;
         case DeviceDriverType::PSCLASSIC:
             printf("PSCLASSIC Loaded\n"); 

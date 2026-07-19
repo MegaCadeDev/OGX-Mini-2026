@@ -4,6 +4,7 @@
 #include <pico/platform.h>
 #include <hardware/clocks.h>
 #include <hardware/timer.h>
+#include <hardware/watchdog.h>
 
 #include "tusb.h"
 
@@ -105,14 +106,12 @@ void set_led(bool state) {
 }
 
 void reboot() {
-    #define AIRCR_REG (*((volatile uint32_t *)(0xE000ED0C)))
-    #define AIRCR_SYSRESETREQ (1 << 2)
-    #define AIRCR_VECTKEY (0x5FA << 16)
-
     OGXM_LOG("Rebooting\n");
-
-    AIRCR_REG = AIRCR_VECTKEY | AIRCR_SYSRESETREQ;
-    while(1);
+    /* Watchdog reset is reliable from either core (BT runs on Core1). */
+    watchdog_reboot(0, 0, 0);
+    while (1) {
+        tight_loop_contents();
+    }
 }
 
 uint32_t ms_since_boot() {

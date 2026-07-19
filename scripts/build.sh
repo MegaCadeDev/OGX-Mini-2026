@@ -21,7 +21,7 @@ BOARDS=(
   "RP2350_ZERO:Waveshare RP2350-Zero"
   "RP2350_USB_A:Waveshare RP2350-USB-A"
   "RP2040_XIAO:Seeed Studio XIAO RP2040"
-  "RP2354:RP2354"
+  "RP2354:RP2354 (RP2350 + Pi Radio Module 2 — BT + PIO USB host GP0/GP1)"
   "ADAFRUIT_FEATHER:Adafruit Feather USB Host"
   "EXTERNAL_4CH_I2C:External 4CH I2C"
   "ESP32_BLUEPAD32_I2C:ESP32 Bluepad32 I2C"
@@ -40,6 +40,8 @@ FIXED_DRIVERS=(
   "DREAMCAST:Dreamcast (GPIO)"
   "N64:Nintendo 64 (GPIO)"
   "DINPUT:DInput"
+  "PS4:PlayStation 4 (DualShock 4 USB)"
+  "STEAM:SteamOS / Bazzite (DualSense + touchpad mouse)"
   "PSCLASSIC:PlayStation Classic"
   "WEBAPP:Web App"
 )

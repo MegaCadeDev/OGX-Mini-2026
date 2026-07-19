@@ -8,7 +8,7 @@
 #include <cstring>
 #include <algorithm>
 
-#if (OGXM_BOARD == PI_PICOW) && defined(CONFIG_EN_USB_HOST)
+#if defined(OGXM_BOARD_USES_PICO_W_FIRMWARE) && defined(CONFIG_EN_USB_HOST)
 #include "Board/board_api.h"
 #include "pico/time.h"
 

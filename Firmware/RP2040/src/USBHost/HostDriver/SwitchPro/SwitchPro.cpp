@@ -14,6 +14,7 @@
 #include "USBHost/HostDriver/SwitchPro/SwitchPro.h"
 #include "USBHost/HostDriver/SwitchPro/Switch2UsbInitPackets.h"
 #include "USBHost/HostManager.h"
+#include "Gamepad/MotionImu.h"
 
 namespace {
 
@@ -90,6 +91,7 @@ void SwitchProHost::switch2_cancel_bringup()
     switch2_bringup_pending_retry_ = false;
     switch2_next_packet_ms_ = 0;
     switch2_pkt_idx_ = 0;
+    switch2_bulk_keepalive_busy_ = false;
 
     if (switch2_dev_addr_ != 0)
     {
@@ -315,6 +317,49 @@ void SwitchProHost::switch2_in_cb(tuh_xfer_s* xfer)
     self->switch2_after_packet_round();
 }
 
+void SwitchProHost::switch2_keepalive_cb(tuh_xfer_s* xfer)
+{
+    const uint8_t daddr = xfer->daddr;
+    const uint8_t instance = static_cast<uint8_t>(xfer->user_data >> 8);
+    SwitchProHost* self = switch2_lookup(daddr, instance);
+    if (self != nullptr)
+    {
+        self->switch2_bulk_keepalive_busy_ = false;
+    }
+    (void)daddr;
+    (void)instance;
+}
+
+void SwitchProHost::switch2_send_bulk_keepalive()
+{
+    if (switch2_ep_out_ == 0 || switch2_bulk_keepalive_busy_)
+    {
+        return;
+    }
+
+    static const uint8_t kKeepalive[] = {0x03, 0x91, 0x00, 0x01, 0x00, 0x00, 0x00};
+    if (sizeof(kKeepalive) > switch2_bulk_out_buf_.size())
+    {
+        return;
+    }
+
+    std::memcpy(switch2_bulk_out_buf_.data(), kKeepalive, sizeof(kKeepalive));
+
+    tuh_xfer_t xfer{};
+    xfer.daddr = switch2_dev_addr_;
+    xfer.ep_addr = switch2_ep_out_;
+    xfer.buflen = static_cast<uint16_t>(sizeof(kKeepalive));
+    xfer.buffer = switch2_bulk_out_buf_.data();
+    xfer.complete_cb = switch2_keepalive_cb;
+    xfer.user_data = switch2_make_cb_token(switch2_dev_addr_, hid_instance_);
+
+    switch2_bulk_keepalive_busy_ = true;
+    if (!tuh_edpt_xfer(&xfer))
+    {
+        switch2_bulk_keepalive_busy_ = false;
+    }
+}
+
 void SwitchProHost::switch2_submit_out_packet()
 {
     const Switch2UsbBulkPacket& pkt = SWITCH2_USB_BULK_PACKETS[switch2_pkt_idx_];
@@ -398,6 +443,9 @@ void SwitchProHost::switch2_finish_bringup()
         init_state_ = InitState::DONE;
         pending_usb_ack_ = 0;
         pending_subcmd_ack_ = 0;
+        send_usb_disable_timeout(switch2_dev_addr_, hid_instance_);
+        switch2_last_bulk_keepalive_ms_ = board_api::ms_since_boot();
+        switch2_send_bulk_keepalive();
         tuh_hid_receive_report(switch2_dev_addr_, hid_instance_);
         return;
     }
@@ -460,9 +508,7 @@ void SwitchProHost::advance_after_usb_ack(Gamepad& gamepad, uint8_t address, uin
 
 void SwitchProHost::send_usb_disable_timeout_and_probe(uint8_t address, uint8_t instance)
 {
-    uint8_t usb_out[63] = {0};
-    usb_out[0] = SwitchPro::CMD::USB_SUB_DISABLE_TIMEOUT;
-    (void)try_hid_out_id(address, instance, SwitchPro::REPORT_ID_USB_OUT, usb_out, sizeof(usb_out));
+    send_usb_disable_timeout(address, instance);
 
     std::memset(&out_report_, 0, sizeof(out_report_));
     fill_neutral_rumble(out_report_);
@@ -473,6 +519,13 @@ void SwitchProHost::send_usb_disable_timeout_and_probe(uint8_t address, uint8_t 
     (void)try_hid_out(address, instance, &out_report_, 11);
     usb_timeout_sent_ = true;
     init_step_retries_ = 0;
+}
+
+void SwitchProHost::send_usb_disable_timeout(uint8_t address, uint8_t instance)
+{
+    uint8_t usb_out[63] = {0};
+    usb_out[0] = SwitchPro::CMD::USB_SUB_DISABLE_TIMEOUT;
+    (void)try_hid_out_id(address, instance, SwitchPro::REPORT_ID_USB_OUT, usb_out, sizeof(usb_out));
 }
 
 void SwitchProHost::init_switch_host(Gamepad& gamepad, uint8_t address, uint8_t instance)
@@ -620,7 +673,8 @@ void SwitchProHost::process_report(Gamepad& gamepad, uint8_t address, uint8_t in
     }
 
     const SwitchPro::InReport* in_report = reinterpret_cast<const SwitchPro::InReport*>(payload);
-    if (std::memcmp(&prev_in_report_.buttons, in_report->buttons, 9) == 0)
+    if (std::memcmp(&prev_in_report_.buttons, in_report->buttons, 9) == 0 &&
+        MotionImu::switch_usb_imu_unchanged(prev_imu_, payload, payload_len))
     {
         tuh_hid_receive_report(address, instance);
         return;
@@ -676,10 +730,24 @@ void SwitchProHost::process_report(Gamepad& gamepad, uint8_t address, uint8_t in
     std::tie(gp_in.joystick_rx, gp_in.joystick_ry) =
         gamepad.scale_joystick_r(normalize_axis(joy_rx), normalize_axis(joy_ry), true);
 
+    if (payload_len >= 22) {
+        gp_in.motion_source = Gamepad::PadIn::MOTION_SRC_SWITCH_USB;
+        MotionImu::fill_from_switch_usb_payload(gp_in.accel, gp_in.gyro, payload, payload_len);
+    }
+
     gamepad.set_pad_in(gp_in);
 
     tuh_hid_receive_report(address, instance);
     std::memcpy(&prev_in_report_, in_report, sizeof(SwitchPro::InReport));
+    if (payload_len >= 22) {
+        constexpr uint16_t kInReportSize = 10;
+        constexpr uint16_t kImuSampleSize = sizeof(MotionImu::SwitchImuSample);
+        uint16_t imu_off = kInReportSize;
+        if (payload_len >= kInReportSize + (3 * kImuSampleSize)) {
+            imu_off = static_cast<uint16_t>(kInReportSize + (2 * kImuSampleSize));
+        }
+        std::memcpy(prev_imu_, payload + imu_off, sizeof(prev_imu_));
+    }
 }
 
 bool SwitchProHost::send_feedback(Gamepad& gamepad, uint8_t address, uint8_t instance)
@@ -719,6 +787,16 @@ bool SwitchProHost::send_feedback(Gamepad& gamepad, uint8_t address, uint8_t ins
         tuh_hid_receive_report(address, instance);
         service_usb_host();
         return false;
+    }
+
+    if (switch2_device)
+    {
+        const uint32_t now_ms = board_api::ms_since_boot();
+        if (now_ms - switch2_last_bulk_keepalive_ms_ >= 2000U)
+        {
+            switch2_last_bulk_keepalive_ms_ = now_ms;
+            switch2_send_bulk_keepalive();
+        }
     }
 
     std::memset(&out_report_, 0, sizeof(out_report_));

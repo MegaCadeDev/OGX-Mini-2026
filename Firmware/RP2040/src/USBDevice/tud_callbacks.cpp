@@ -8,6 +8,10 @@
 #include "USBDevice/DeviceManager.h"
 #include "USBDevice/DeviceDriver/DeviceDriverTypes.h"
 
+#if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
+#include "Bluepad32/Bluepad32.h"
+#endif
+
 const usbd_class_driver_t *usbd_app_driver_get_cb(uint8_t *driver_count) 
 {
 	DeviceDriverType dt = DeviceManager::get_instance().get_driver_type();
@@ -62,3 +66,9 @@ uint8_t const* tud_descriptor_device_qualifier_cb()
 {
 	return DeviceManager::get_instance().get_driver()->get_descriptor_device_qualifier_cb();
 }
+
+#if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
+void tud_resume_cb(void) {
+	bluepad32::on_usb_device_resume();
+}
+#endif

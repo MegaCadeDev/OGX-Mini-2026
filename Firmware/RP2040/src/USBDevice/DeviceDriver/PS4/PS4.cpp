@@ -2,6 +2,7 @@
 #include <algorithm>
 
 #include "pico/time.h"
+#include "Gamepad/MotionImu.h"
 #include "USBDevice/DeviceDriver/PS4/PS4.h"
 #include "Descriptors/PS4Usb.h"
 
@@ -45,22 +46,24 @@ int16_t scale_i32_to_i16_rounded(int32_t v, int32_t div)
 	return static_cast<int16_t>(q);
 }
 
-/* Brook capture: int16 LE gyro @ 13–18, accel @ 19–24 in report id 1. IMU is only filled from
- * Bluetooth (Bluepad): DS4 / DualSense / Switch Pro — not USB host controllers. */
+/* Brook capture: int16 LE gyro @ 13–18, accel @ 19–24 in report id 1. Filled from DS4/DS5 BT,
+ * Switch Pro, or wired DS4/DualSense USB host paths. */
 void apply_pad_imu_to_ps4_report(std::array<uint8_t, 64>& rep, const Gamepad::PadIn& gp_in)
 {
-	if (gp_in.motion_source != Gamepad::PadIn::MOTION_SRC_DS4 &&
-	    gp_in.motion_source != Gamepad::PadIn::MOTION_SRC_DS5 &&
-	    gp_in.motion_source != Gamepad::PadIn::MOTION_SRC_SWITCH_PRO) {
+	if (!gp_in.has_motion()) {
 		return;
 	}
 
-	const int16_t gx = scale_i32_to_i16_rounded(gp_in.gyro[0], 8);
-	const int16_t gy = scale_i32_to_i16_rounded(gp_in.gyro[1], 8);
-	const int16_t gz = scale_i32_to_i16_rounded(gp_in.gyro[2], 8);
-	const int16_t ax = scale_i32_to_i16_rounded(gp_in.accel[0], 64);
-	const int16_t ay = scale_i32_to_i16_rounded(gp_in.accel[1], 64);
-	const int16_t az = scale_i32_to_i16_rounded(gp_in.accel[2], 64);
+	int32_t accel[3] = {gp_in.accel[0], gp_in.accel[1], gp_in.accel[2]};
+	int32_t gyro[3] = {gp_in.gyro[0], gp_in.gyro[1], gp_in.gyro[2]};
+	MotionImu::remap_to_ds4_playing_frame(gp_in.motion_source, accel, gyro);
+
+	const int16_t gx = scale_i32_to_i16_rounded(gyro[0], 8);
+	const int16_t gy = scale_i32_to_i16_rounded(gyro[1], 8);
+	const int16_t gz = scale_i32_to_i16_rounded(gyro[2], 8);
+	const int16_t ax = scale_i32_to_i16_rounded(accel[0], 64);
+	const int16_t ay = scale_i32_to_i16_rounded(accel[1], 64);
+	const int16_t az = scale_i32_to_i16_rounded(accel[2], 64);
 
 	std::memcpy(&rep[13], &gx, 2);
 	std::memcpy(&rep[15], &gy, 2);

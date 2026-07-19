@@ -34,7 +34,9 @@ This document lists controllers supported when connected to the OGX-Mini adapter
 
 *See `PS3_IDS` in `HardwareIDs.h` for the full VID/PID list.*
 
-**DualShock 3 over USB cable (PIO USB host):** v1.0.0.11a sends **SET feature 0xF4** and a **player LED OUT** report at connect (USB Host Shield sequence) with **`pio_usb_host_frame()`** during init, plus a **1 Hz keepalive OUT** so the pad stays connected. On **Pico W / Pico 2 W**, Bluetooth **auto-pair** (feature **0xF5**) still runs after wired init when enabled. See [IMPROVEMENTS.md — DualShock 3 wired USB host](IMPROVEMENTS.md#dualshock-3--wired-usb-host).
+**Button mappings (all modes):** [Controller_Mappings.md](Controller_Mappings.md)
+
+**DualShock 3 over USB cable (PIO USB host):** v1.0.0.11a sends **SET feature 0xF4** and a **player LED OUT** report at connect (USB Host Shield sequence) with **`pio_usb_host_frame()`** during init, plus a **1 Hz keepalive OUT** so the pad stays connected. On **Pico W / Pico 2 W / RP2354** BT builds, **v1.0.0.12a** sync-sends Bluetooth **auto-pair** (feature **0xF5** with the adapter BD_ADDR) right after that wired init (deferred if the radio address is not ready yet). See [IMPROVEMENTS.md — DualShock 3 wired USB host](IMPROVEMENTS.md#dualshock-3--wired-usb-host) and [automatic USB programming for Bluetooth pairing](IMPROVEMENTS.md#dualshock-3--automatic-usb-programming-for-bluetooth-pairing).
 
 ---
 
@@ -115,7 +117,7 @@ Controllers that use the standard HID gamepad (DInput) protocol, including:
 - **PowerA, PDP, Afterglow:** Various Xbox/PC controllers in HID mode
 - **GameSir:** G3, G4, T3, T4, G7 Pro, etc.
 - **Razer:** Kishi, Hydra, Serval, Raiju (PC/HID)
-- **Steam:** Steam Controller, Steam Deck (when presenting as gamepad)
+- **Steam:** Steam Controller, Steam Deck (when presenting as gamepad). **Steam Controller 2026** body USB is **`28de:1302`** (generic HID if supported by the host stack). **Wireless BLE** (`28de:1303`) on Pico W / Pico 2 W / RP2354 is documented in [IMPROVEMENTS — Steam Controller 2026](IMPROVEMENTS.md#steam-controller-2026-triton--bluetooth).
 - **Sony:** DualShock 2 (via USB adapter), Steam Virtual Gamepad
 - **Flydigi:** Vader 4 Pro (DInput mode)
 - **Scuf:** Envision (Linux/HID)
@@ -137,3 +139,4 @@ Controllers that use the standard HID gamepad (DInput) protocol, including:
 - **VID/PID lists:** `Firmware/RP2040/src/USBHost/HardwareIDs.h`
 - **Host drivers:** `Firmware/RP2040/src/USBHost/HostDriver/`
 - **Platform selection:** See the main [README](../../../README.md) for button combos to change output platform.
+- **SteamOS / Bazzite (STEAM output):** USB presents **DualSense** (`054c:0ce6`) + **HID mouse**. **DualSense** input (wired or BT): passthrough gamepad + **touchpad → cursor**; other pads get synthesized DualSense mapping (gamepad only — no stick mouse). **Start + LB + D-pad Up** selects mode. See [README — SteamOS / Bazzite](../../../README.md#steamos--bazzite-output-mode), [IMPROVEMENTS — STEAM mode](IMPROVEMENTS.md#steam-mode--steamos--bazzite-linux-desktop), and [Controller_Mappings — STEAM](Controller_Mappings.md#steamos--bazzite-steam-mode).

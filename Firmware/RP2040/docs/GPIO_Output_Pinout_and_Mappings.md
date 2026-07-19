@@ -190,4 +190,4 @@ Data lines use **GPIO** numbers on the Pico. Power uses the Pico’s **GND** and
 
 ## Changing mappings
 
-Default mappings are fixed in the device drivers. User-configurable button remapping is available for **USB device** modes (e.g. Switch, XInput) via the web app; GPIO output modes (PS1/PS2, Dreamcast, GameCube, N64) currently use the defaults above only. To change them you would need to edit the corresponding driver source (e.g. `PS1PS2.cpp`, `Dreamcast.cpp`, `GameCube.cpp`, `N64.cpp`) and rebuild.
+Default mappings are fixed in the device drivers. User-configurable button remapping is available for **USB device** modes (e.g. Switch, XInput) via the web app; GPIO output modes (PS1/PS2, Dreamcast, GameCube, N64) currently use the defaults above only. See **[Controller_Mappings.md](Controller_Mappings.md)** for the full mapping reference across all modes.

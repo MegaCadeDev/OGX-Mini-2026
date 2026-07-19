@@ -72,6 +72,9 @@
 #define HCI_RESET_RESEND_TIMEOUT_MS 1000
 
 #define ENABLE_SOFTWARE_AES128
+/* Steam Controller 2026 (and many modern BLE pads) reject legacy SMP with
+ * AUTH_REQUIREMENTS_MISMATCH unless LE Secure Connections is available. */
+#define ENABLE_LE_SECURE_CONNECTIONS
 #define ENABLE_MICRO_ECC_FOR_LE_SECURE_CONNECTIONS
 
 #define HAVE_BTSTACK_STDIN
