@@ -21,6 +21,8 @@ Optional / advanced:
 
 ## 1. Required applications (RP2040 / RP2350 firmware)
 
+> **No toolchain?** If you prefer not to install anything locally, the [Docker build](#docker-build-no-local-toolchain-required) section below handles the ARM toolchain and pico-sdk inside a container.
+
 Install **all** of the following and ensure they are on your **PATH** (open a new terminal after installing).
 
 | Tool | Why it is required | Check |
@@ -156,7 +158,7 @@ If that file is missing, re-run `git submodule update --init --recursive`.
 
 ## 3. Pico SDK (required — not a git submodule)
 
-`Firmware/external/pico-sdk` is **gitignored**. The automatic CMake cloners (`get_pico_sdk`) is currently **commented out**, so a clean clone **will not** compile until the SDK is present.
+`Firmware/external/pico-sdk` is **gitignored**. For **native builds**, the SDK must be present locally - a plain clone will not compile without it. The [Docker build](#docker-build-no-local-toolchain-required) handles the SDK automatically inside the container.
 
 This project expects **Pico SDK tag `2.1.0`**.
 
@@ -212,6 +214,31 @@ The script will:
 On success, flash the **`.uf2`** from `scripts/build/` (see [§6](#6-flash-the-firmware)).
 
 On failure, the script can save `scripts/build_log.txt` for debugging.
+
+---
+
+## Docker build (no local toolchain required)
+
+If you prefer not to install any build tools locally, you can build inside a pre-configured Docker container. **Docker Desktop** (Windows / macOS) or **Docker Engine** (Linux) is the only prerequisite.
+
+From the **repository root** (any POSIX shell -- Git Bash, MSYS2, or WSL on Windows):
+
+```bash
+./scripts/docker/docker-build.sh
+```
+
+The script:
+
+1. Builds (or reuses) the `ogx-mini-2026` Docker image. The rebuild is skipped automatically when the Dockerfile has not changed.
+2. Prompts for the same options as `scripts/build.sh` (board, output mode, release/debug).
+3. Runs the build inside the container using a named Docker volume for incremental object files.
+4. Copies the `.uf2` (and `.elf` for debug) produced by the current run into `scripts/build/` on the host.
+
+Only a plain `git clone` (no `--recursive`) is needed before the first run. Required submodules are initialized automatically inside the container. The pico-sdk is **not** required locally.
+
+Flash the output `.uf2` as described in [§6](#6-flash-the-firmware).
+
+See [`scripts/README.md`](../../../scripts/README.md) for more details.
 
 ---
 

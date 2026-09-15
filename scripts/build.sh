@@ -4,7 +4,7 @@
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="${OGXM_REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FIRMWARE_RP2040="$REPO_ROOT/Firmware/RP2040"
 
 if [ ! -f "$FIRMWARE_RP2040/CMakeLists.txt" ]; then
@@ -137,8 +137,7 @@ if [ "$config_choice" = "2" ]; then
 fi
 
 # --- Run build ---
-BUILD_DIR="$SCRIPT_DIR/build"
-rm -rf "$BUILD_DIR"
+BUILD_DIR="${OGXM_BUILD_DIR:-$SCRIPT_DIR/build}"
 mkdir -p "$BUILD_DIR"
 
 echo ""
@@ -151,10 +150,19 @@ trap "rm -f '$BUILD_LOG'" EXIT
 
 (
   cd "$BUILD_DIR"
-  CMAKE_ARGS=(-G Ninja -DOGXM_BOARD="$OGXM_BOARD" -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE")
-  [ -n "$OGXM_FIXED_DRIVER" ] && CMAKE_ARGS+=(-DOGXM_FIXED_DRIVER="$OGXM_FIXED_DRIVER" -DOGXM_FIXED_DRIVER_ALLOW_COMBOS=OFF)
+  CMAKE_ARGS=(-G Ninja -DOGXM_BOARD="$OGXM_BOARD" -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" -DOGXM_FIXED_DRIVER="$OGXM_FIXED_DRIVER")
+  [ -n "$OGXM_FIXED_DRIVER" ] && CMAKE_ARGS+=(-DOGXM_FIXED_DRIVER_ALLOW_COMBOS=OFF)
   [ "$OGXM_SWITCH2_HID_RAW_LOG" = "ON" ] && CMAKE_ARGS+=(-DOGXM_SWITCH2_HID_RAW_LOG=ON)
-  cmake "${CMAKE_ARGS[@]}" "$FIRMWARE_RP2040"
+  CACHE="$BUILD_DIR/CMakeCache.txt"
+  NEEDS_CONFIGURE=1
+  if [ -f "$CACHE" ]; then
+    _board=$(grep -m1 '^OGXM_BOARD:'        "$CACHE" | cut -d= -f2)
+    _type=$( grep -m1 '^CMAKE_BUILD_TYPE:'  "$CACHE" | cut -d= -f2)
+    _fixed=$(grep -m1 '^OGXM_FIXED_DRIVER:' "$CACHE" | cut -d= -f2)
+    [ "$_board" = "$OGXM_BOARD" ] && [ "$_type" = "$CMAKE_BUILD_TYPE" ] && [ "$_fixed" = "$OGXM_FIXED_DRIVER" ] \
+      && NEEDS_CONFIGURE=0
+  fi
+  [ "$NEEDS_CONFIGURE" = "1" ] && cmake "${CMAKE_ARGS[@]}" "$FIRMWARE_RP2040"
   ninja
 ) 2>&1 | tee "$BUILD_LOG"
 BUILD_STATUS=${PIPESTATUS[0]}
