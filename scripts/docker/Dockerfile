@@ -73,10 +73,10 @@ COPY --from=picotool-builder /build/picotool /opt/picotool-src
 COPY --from=pico-sdk-builder /build/pico-sdk /opt/pico-sdk
 
 # Separate layer so patch updates don't bust the SDK copy above.
-COPY Firmware/external/patches/pico_sdk_hids_host.diff /tmp/pico_sdk_hids_host.diff
+COPY Firmware/external/patches/ /tmp/patches/
 RUN cd /opt/pico-sdk \
-    && git apply --ignore-whitespace /tmp/pico_sdk_hids_host.diff \
-    && rm /tmp/pico_sdk_hids_host.diff
+    && find /tmp/patches -name "pico_sdk_*.diff" | sort | xargs git apply --ignore-whitespace \
+    && rm -rf /tmp/patches
 
 COPY --from=arm-toolchain-builder /opt/arm-toolchain /opt/arm-toolchain
 
@@ -85,3 +85,6 @@ ENV PICO_SDK_PATH=/opt/pico-sdk \
     PICOTOOL_FETCH_FROM_GIT_PATH=/opt/picotool-src
 ENV PATH="/opt/arm-toolchain/bin:${PATH}"
 WORKDIR /repo
+
+COPY scripts/docker/container-build.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

@@ -8,6 +8,12 @@ OUTPUT_DIR="$REPO_ROOT/scripts/build"
 
 IMAGE_NAME="ogx-mini-2026"
 BUILD_VOLUME="ogx-mini-2026-build"
+DOCKERFILE="$SCRIPT_DIR/Dockerfile"
+PATCHES_DIR="$REPO_ROOT/Firmware/external/patches"
+
+_hash_files() {
+    if command -v sha256sum &>/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi
+}
 
 if ! command -v docker &>/dev/null; then
     echo "Error: 'docker' not found in PATH."
@@ -20,14 +26,13 @@ if ! docker info &>/dev/null; then
     exit 1
 fi
 
-DOCKERFILE="$SCRIPT_DIR/Dockerfile"
-PATCH_FILE="$REPO_ROOT/Firmware/external/patches/pico_sdk_hids_host.diff"
-_hash_files() {
-    if command -v sha256sum &>/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi
-}
-IMAGE_HASH=$(_hash_files "$DOCKERFILE" "$PATCH_FILE" | _hash_files | cut -d' ' -f1)
+mapfile -t SDK_PATCHES < <(find "$PATCHES_DIR" -name "pico_sdk_*.diff" | sort)
+# Hash all inputs together, then hash the combined output to get a single stable digest.
+IMAGE_HASH=$(_hash_files "$DOCKERFILE" "$SCRIPT_DIR/container-build.sh" "${SDK_PATCHES[@]}" | _hash_files | cut -d' ' -f1)
+
 PICO_SDK_VERSION=$(grep -m1 '^set(PICOSDK_VERSION_TAG' "$REPO_ROOT/Firmware/RP2040/CMakeLists.txt" | grep -o '"[^"]*"' | tr -d '"')
 [ -z "$PICO_SDK_VERSION" ] && { echo "Error: could not read PICOSDK_VERSION_TAG from CMakeLists.txt"; exit 1; }
+
 read -r EXISTING_HASH EXISTING_SDK <<< "$(docker image inspect "$IMAGE_NAME" \
     --format '{{ index .Config.Labels "image_hash" }} {{ index .Config.Labels "pico_sdk_version" }}' \
     2>/dev/null || true)"
@@ -59,8 +64,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -i $TTY_FLAG \
     -v "$OUTPUT_DIR:/output" \
     -e OGXM_BUILD_DIR=/build \
     -w /repo \
-    "$IMAGE_NAME" \
-    bash scripts/docker/container-build.sh
+    "$IMAGE_NAME"
 
 echo
 echo "Firmware files in: $OUTPUT_DIR"

@@ -1,3 +1,4 @@
 # Exclude everything; allow only what the Dockerfile actually COPYs.
 *
-!Firmware/external/patches/pico_sdk_hids_host.diff
+!Firmware/external/patches/
+!scripts/docker/container-build.sh

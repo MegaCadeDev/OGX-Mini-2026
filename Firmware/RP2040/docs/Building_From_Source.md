@@ -219,26 +219,15 @@ On failure, the script can save `scripts/build_log.txt` for debugging.
 
 ## Docker build (no local toolchain required)
 
-If you prefer not to install any build tools locally, you can build inside a pre-configured Docker container. **Docker Desktop** (Windows / macOS) or **Docker Engine** (Linux) is the only prerequisite.
-
-From the **repository root** (any POSIX shell -- Git Bash, MSYS2, or WSL on Windows):
+If you prefer not to install any build tools locally, **Docker Desktop** (Windows / macOS) or **Docker Engine** (Linux) is the only prerequisite. Run from the repository root:
 
 ```bash
 ./scripts/docker/docker-build.sh
 ```
 
-The script:
+No local ARM toolchain, CMake, or pico-sdk needed - everything runs inside the container. Only a plain `git clone` (no `--recursive`) is required before the first run. Flash the output `.uf2` as described in [§6](#6-flash-the-firmware).
 
-1. Builds (or reuses) the `ogx-mini-2026` Docker image. The rebuild is skipped automatically when the Dockerfile has not changed.
-2. Prompts for the same options as `scripts/build.sh` (board, output mode, release/debug).
-3. Runs the build inside the container using a named Docker volume for incremental object files.
-4. Copies the `.uf2` (and `.elf` for debug) produced by the current run into `scripts/build/` on the host.
-
-Only a plain `git clone` (no `--recursive`) is needed before the first run. Required submodules are initialized automatically inside the container. The pico-sdk is **not** required locally.
-
-Flash the output `.uf2` as described in [§6](#6-flash-the-firmware).
-
-See [`scripts/README.md`](../../../scripts/README.md) for more details.
+Full details and Windows notes: [`scripts/README.md`](../../../scripts/README.md).
 
 ---
 

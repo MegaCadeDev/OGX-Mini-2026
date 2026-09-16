@@ -13,6 +13,17 @@ Features and fixes added in this fork. For the latest firmware improvements (PS3
 
 ---
 
+### Docker build (no local toolchain required)
+
+- New `scripts/docker/docker-build.sh` builds firmware inside a container; only Docker Desktop (Windows / macOS) or Docker Engine (Linux) is required.
+- No ARM toolchain, CMake, or pico-sdk install needed -- everything runs inside the image.
+- The image rebuilds automatically when the Dockerfile, SDK patches, or pico-sdk version change.
+- A named volume caches build objects between runs for fast incremental rebuilds; output goes to `scripts/build/`.
+- A plain `git clone` (no `--recursive`) is sufficient before the first run.
+- See [`scripts/README.md`](scripts/README.md) for full details and Windows notes.
+
+---
+
 ### Version 1.0.0.13a
 
 - **Xbox One / Series wired Guide hold vs tap ([#27](https://github.com/MegaCadeDev/OGX-Mini-2026/issues/27))** — GIP **`0x07` VIRTUAL_KEY** Guide: taps used to latch **`BUTTON_SYS`** (360 shutdown menu); Issue27Test’s **~80 ms** forced pulse fixed taps but **broke real holds**. **Fix:** keep SYS while `0x07` says pressed, clear immediately on release (always `set_pad_in` on both edges); **5 s** orphan clear only if release never arrives; drop broken `memcmp` on INPUT. **Issue27Test2 regression:** deferred **`start_xboxone`** only for arcade sticks left first-party **Series X** (`045e:0b12`) mounted with rumble/host LED but **Guide light off / no input** — restore delayed **`start_xboxone` / POWER_ON + S_INIT** for **all** GIP pads; ANNOUNCE re-inits standard pads if power was never sent. **Files:** `XboxOne.cpp` / `XboxOne.h`, `tuh_xinput.cpp`.

@@ -88,7 +88,7 @@ for i in "${!BOARDS[@]}"; do
 done
 echo "  $(( ${#BOARDS[@]} + 1 ))) Cancel"
 read -r -p "Choice [1-${#BOARDS[@]}]: " board_choice
-if [ "$board_choice" = "$(( ${#BOARDS[@]} + 1 ))" ]; then echo "Cancelled."; exit 0; fi
+if [ "$board_choice" = "$(( ${#BOARDS[@]} + 1 ))" ]; then echo "Cancelled."; exit 2; fi
 if [ "$board_choice" -lt 1 ] || [ "$board_choice" -gt ${#BOARDS[@]} ]; then echo "Invalid choice."; exit 1; fi
 IFS=: read -r OGXM_BOARD _ <<< "${BOARDS[$((board_choice-1))]}"
 
@@ -107,7 +107,7 @@ if [ "$build_type_choice" = "2" ]; then
   done
   echo "  $(( ${#FIXED_DRIVERS[@]} + 1 ))) Cancel"
   read -r -p "Choice [1-${#FIXED_DRIVERS[@]}]: " driver_choice
-  if [ "$driver_choice" = "$(( ${#FIXED_DRIVERS[@]} + 1 ))" ]; then echo "Cancelled."; exit 0; fi
+  if [ "$driver_choice" = "$(( ${#FIXED_DRIVERS[@]} + 1 ))" ]; then echo "Cancelled."; exit 2; fi
   if [ "$driver_choice" -lt 1 ] || [ "$driver_choice" -gt ${#FIXED_DRIVERS[@]} ]; then echo "Invalid choice."; exit 1; fi
   IFS=: read -r OGXM_FIXED_DRIVER _ <<< "${FIXED_DRIVERS[$((driver_choice-1))]}"
 fi
@@ -137,7 +137,13 @@ if [ "$config_choice" = "2" ]; then
 fi
 
 # --- Run build ---
-BUILD_DIR="${OGXM_BUILD_DIR:-$SCRIPT_DIR/build}"
+if [ -n "$OGXM_BUILD_DIR" ]; then
+  # Docker: per-board subdirectory on the volume; preserve cache for incremental builds.
+  BUILD_DIR="$OGXM_BUILD_DIR/$OGXM_BOARD"
+else
+  BUILD_DIR="$SCRIPT_DIR/build"
+  rm -rf "$BUILD_DIR"
+fi
 mkdir -p "$BUILD_DIR"
 
 echo ""

@@ -16,18 +16,49 @@ echo
 # Copy to tmpfs first - bash reading a script off a Windows bind mount mid-execution
 # can hit ENODATA errors when it blocks on interactive reads.
 cp /repo/scripts/build.sh /tmp/build.sh
-trap '[ -f /tmp/build_log.txt ] && cp /tmp/build_log.txt /output/build_log.txt' EXIT
+
+_build_output=$(mktemp)
+_cleanup() {
+    [ -f /tmp/build_log.txt ] && cp /tmp/build_log.txt /output/build_log.txt
+    rm -f "$_build_output"
+}
+trap _cleanup EXIT
+
 touch /tmp/build_start
-OGXM_REPO_ROOT=/repo bash /tmp/build.sh
+OGXM_REPO_ROOT=/repo bash /tmp/build.sh 2>&1 | tee "$_build_output"
+_build_exit=${PIPESTATUS[0]}
+[ "$_build_exit" -eq 2 ] && exit 0
+[ "$_build_exit" -ne 0 ] && exit "$_build_exit"
+
+BUILD_DIR=$(grep "^Output directory:" "$_build_output" | tail -1 | cut -d' ' -f3-)
 
 echo "==> Copying firmware"
-BOARD=$(grep -m1 "^OGXM_BOARD:"        "$OGXM_BUILD_DIR/CMakeCache.txt" | cut -d= -f2)
-TYPE=$( grep -m1 "^CMAKE_BUILD_TYPE:"  "$OGXM_BUILD_DIR/CMakeCache.txt" | cut -d= -f2)
-FIXED=$(grep -m1 "^OGXM_FIXED_DRIVER:" "$OGXM_BUILD_DIR/CMakeCache.txt" | cut -d= -f2)
-DBG=""; [ "$TYPE" = "Debug" ] && DBG="-Debug"
+
+while IFS= read -r line; do
+    case "$line" in
+        OGXM_BOARD:*)        BOARD="${line#*=}" ;;
+        CMAKE_BUILD_TYPE:*)  TYPE="${line#*=}" ;;
+        OGXM_FIXED_DRIVER:*) FIXED="${line#*=}" ;;
+    esac
+done < <(grep -E "^(OGXM_BOARD|CMAKE_BUILD_TYPE|OGXM_FIXED_DRIVER):" "$BUILD_DIR/CMakeCache.txt")
+
+DBG=""
+[ "$TYPE" = "Debug" ] && DBG="-Debug"
 SUFFIX="${FIXED:-Multi}"
-while IFS= read -r f; do
+
+_find_fw() {
+    find "$BUILD_DIR" -maxdepth 1 "$@" \
+        \( -name "*-${BOARD}${DBG}-${SUFFIX}.uf2" \
+        -o -name "*-${BOARD}${DBG}-${SUFFIX}.elf" \)
+}
+
+mapfile -t FIRMWARE < <(_find_fw -newer /tmp/build_start)
+if [ ${#FIRMWARE[@]} -eq 0 ]; then
+    mapfile -t FIRMWARE < <(_find_fw)
+    [ ${#FIRMWARE[@]} -gt 0 ] && echo "  (build fully cached -- using firmware from volume)"
+fi
+
+for f in "${FIRMWARE[@]}"; do
     cp "$f" /output/
     printf "  %s\n" "$(basename "$f")"
-done < <(find "$OGXM_BUILD_DIR" -maxdepth 1 -newer /tmp/build_start \
-    \( -name "*-${BOARD}${DBG}-${SUFFIX}.uf2" -o -name "*-${BOARD}${DBG}-${SUFFIX}.elf" \))
+done
