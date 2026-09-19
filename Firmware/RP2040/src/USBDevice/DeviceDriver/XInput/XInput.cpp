@@ -8,6 +8,9 @@
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
 #include "Board/ogxm_log.h"
+#include "hardware/structs/usb.h"
+#include "hardware/regs/usb.h"
+#include "hardware/sync.h"
 #if defined(CONFIG_EN_USB_HOST)
 #include "USBHost/HostDriver/GameSirCyclone2/GameSirCyclone2Trace.h"
 #include "Input/InputSlot.h"
@@ -144,6 +147,39 @@ namespace {
 #endif
 }
 
+static void xbox360_send_wake_signal()
+{
+    constexpr uint32_t WAKE_DURATION_US = 11087;
+
+    const uint32_t direct_mask =
+        USB_SIE_CTRL_DIRECT_EN_BITS |
+        USB_SIE_CTRL_DIRECT_DP_BITS |
+        USB_SIE_CTRL_DIRECT_DM_BITS;
+
+    const uint32_t wake_state =
+        USB_SIE_CTRL_DIRECT_EN_BITS |
+        USB_SIE_CTRL_DIRECT_DM_BITS;
+
+    // Force:
+    //   D+ = LOW
+    //   D- = HIGH
+    //
+    // This matches the wake state observed from a wired xbox controller
+    hw_write_masked(
+        &usb_hw->sie_ctrl,
+        wake_state,
+        direct_mask
+    );
+
+    sleep_us(WAKE_DURATION_US);
+
+    // Return ownership of D+/D- to the USB controller.
+    hw_clear_bits(
+        &usb_hw->sie_ctrl,
+        USB_SIE_CTRL_DIRECT_EN_BITS
+    );
+}
+
 void XInputDevice::initialize()
 {
 	class_driver_ = *tud_xinput::class_driver();
@@ -216,38 +252,66 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 	in_report_.joystick_rx = gp_in.joystick_rx;
 	in_report_.joystick_ry = Range::invert(gp_in.joystick_ry);
 
-	// Remote wake when host has suspended the bus (e.g. 360 "off" with USB power kept):
-	// - Guide (Home) press, or
-	// - Start held for 3 seconds (avoids holding Guide on Xbox One/PS5 pads, which can turn the controller off).
+	/*
+	// Wake Xbox 360 from standby/off state:
+	// - Hold Guide for 2 seconds, or
+	// - Hold Start for 2 seconds.
+	//
+	// Xbox 360 standby does not appear as a normal USB suspend state,
+	// so tud_suspended() / tud_remote_wakeup() are not used here.
+	//
+	// Instead, when no active USB host is mounted, reproduce the
+	// wake bus state observed from a genuine wired Xbox 360 controller.
+	*/
 	{
-		static bool start_wake_sent = false;
-		static bool start_held = false;
-		static absolute_time_t start_hold_begin = { 0 };
-		bool start_pressed = (gp_in.buttons & Gamepad::BUTTON_START) != 0;
-		if (start_pressed)
+		static bool wake_hold_active = false;
+		static bool wake_sent = false;
+		static absolute_time_t wake_hold_begin = { 0 };
+
+		const bool guide_pressed =
+			(gp_in.buttons & Gamepad::BUTTON_SYS) != 0;
+
+		const bool start_pressed =
+			(gp_in.buttons & Gamepad::BUTTON_START) != 0;
+
+		const bool wake_button_pressed =
+			guide_pressed || start_pressed;
+
+		const bool xbox_host_active = tud_mounted();
+
+		if (!xbox_host_active)
 		{
-			if (!start_held)
+			if (wake_button_pressed)
 			{
-				start_held = true;
-				start_hold_begin = get_absolute_time();
+				if (!wake_hold_active)
+				{
+					wake_hold_active = true;
+					wake_hold_begin = get_absolute_time();
+				}
+				else if (!wake_sent)
+				{
+					uint64_t hold_ms =
+						to_ms_since_boot(get_absolute_time()) -
+						to_ms_since_boot(wake_hold_begin);
+
+					if (hold_ms >= 2000)
+					{
+						xbox360_send_wake_signal();
+						wake_sent = true;
+					}
+				}
 			}
 			else
 			{
-				uint64_t hold_ms = to_ms_since_boot(get_absolute_time()) - to_ms_since_boot(start_hold_begin);
-				if (hold_ms >= 3000 && tud_suspended() && !start_wake_sent)
-				{
-					tud_remote_wakeup();
-					start_wake_sent = true;
-				}
+				wake_hold_active = false;
+				wake_sent = false;
 			}
 		}
 		else
 		{
-			start_held = false;
-			start_wake_sent = false;
+			wake_hold_active = false;
+			wake_sent = false;
 		}
-		if (tud_suspended() && (gp_in.buttons & Gamepad::BUTTON_SYS))
-			tud_remote_wakeup();
 	}
 
 	/* Final face swap for Cyclone 2 Switch only — after all PadIn→XInput mapping. */
