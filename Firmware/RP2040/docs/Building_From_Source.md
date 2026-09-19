@@ -21,6 +21,8 @@ Optional / advanced:
 
 ## 1. Required applications (RP2040 / RP2350 firmware)
 
+> **No toolchain?** If you prefer not to install anything locally, the [Docker build](#docker-build-no-local-toolchain-required) section below handles the ARM toolchain and pico-sdk inside a container.
+
 Install **all** of the following and ensure they are on your **PATH** (open a new terminal after installing).
 
 | Tool | Why it is required | Check |
@@ -156,7 +158,7 @@ If that file is missing, re-run `git submodule update --init --recursive`.
 
 ## 3. Pico SDK (required — not a git submodule)
 
-`Firmware/external/pico-sdk` is **gitignored**. The automatic CMake cloners (`get_pico_sdk`) is currently **commented out**, so a clean clone **will not** compile until the SDK is present.
+`Firmware/external/pico-sdk` is **gitignored**. For **native builds**, the SDK must be present locally - a plain clone will not compile without it. The [Docker build](#docker-build-no-local-toolchain-required) handles the SDK automatically inside the container.
 
 This project expects **Pico SDK tag `2.1.0`**.
 
@@ -212,6 +214,20 @@ The script will:
 On success, flash the **`.uf2`** from `scripts/build/` (see [§6](#6-flash-the-firmware)).
 
 On failure, the script can save `scripts/build_log.txt` for debugging.
+
+---
+
+## Docker build (no local toolchain required)
+
+If you prefer not to install any build tools locally, **Docker Desktop** (Windows / macOS) or **Docker Engine** (Linux) is the only prerequisite. Run from the repository root:
+
+```bash
+./scripts/docker/docker-build.sh
+```
+
+No local ARM toolchain, CMake, or pico-sdk needed - everything runs inside the container. Only a plain `git clone` (no `--recursive`) is required before the first run. Flash the output `.uf2` as described in [§6](#6-flash-the-firmware).
+
+Full details and Windows notes: [`scripts/README.md`](../../../scripts/README.md).
 
 ---
 

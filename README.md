@@ -318,7 +318,7 @@ A multi-pad build may still **compile** with other modes available in the combo 
 
 **Recommendation:** Use **`-DMAX_GAMEPADS=1`** (default) unless you specifically need a Wii U GameCube Adapter multi-player adapter. For Xbox 360 local multiplayer, use one OGX-Mini per player, each adapter receives its own per-device XSM3/USB identity. See **Two adapters on Xbox 360** and **Two adapters on other consoles** under [Features new to this fork](#features-new-to-this-fork).
 
-You'll need the tools listed in [Building_From_Source.md](Firmware/RP2040/docs/Building_From_Source.md). CMake scripts patch Bluepad32 and BTStack and initialize selected git submodules; clone with `--recursive` (or `git submodule update --init --recursive`) and install Pico SDK **2.1.0** before the first build.
+You'll need the tools listed in [Building_From_Source.md](Firmware/RP2040/docs/Building_From_Source.md) for native build, or use the **Docker build** (`./scripts/docker/docker-build.sh`) which handles the toolchain and SDK automatically. CMake scripts patch Bluepad32 and BTStack and initialize selected git submodules; clone with `--recursive` (or `git submodule update --init --recursive`) and install Pico SDK **2.1.0** before the first **native** build.
 
 #### Build scripts (recommended for new users)
 
@@ -328,6 +328,7 @@ We provide interactive build scripts so you can build firmware without memorizin
 |----------|----------------------------------|
 | **Linux / macOS** | `./scripts/build.sh` |
 | **Windows (PowerShell)** | `.\scripts\build.ps1` |
+| **Docker (no local toolchain)** | `./scripts/docker/docker-build.sh` |
 
 The script will:
 
@@ -336,7 +337,7 @@ The script will:
 3. **Ask for build type** — **Default** (all output modes available via button combos) or **Fixed output mode** (e.g. Wii, GameCube, N64, **STEAM**, PS4 — one mode only, no combo switching).
 4. **Ask for configuration** — **Release** (smaller, faster) or **Debug** (UART logging for troubleshooting).
 
-Build output (`.uf2`, `.elf`, etc.) is written to **`scripts/build/`**. To flash the board, copy the `.uf2` file from that folder to the Pico’s USB drive. If the build fails, the script can save a log to `scripts/build_log.txt` for debugging.
+Build output (`.uf2`, `.elf`, etc.) is written to **`scripts/build/`**. To flash the board, copy the `.uf2` file from that folder to the Pico's USB drive. If the build fails, the script can save a log to `scripts/build_log.txt` for debugging. See **[scripts/README.md](scripts/README.md)** for Docker details.
 
 #### Manual build (CMake from command line)
 
