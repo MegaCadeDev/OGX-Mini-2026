@@ -139,7 +139,13 @@ void SwitchDevice::build_standard_report(const SwitchPro::SwitchReport& sw)
 		vibration_report_ = VIB_OPTS[vibration_idx_];
 	}
 	report_[11] = vibration_report_;
-	/* IMU passthrough disabled for now (report bytes 12–47 stay zero). */
+	/* IMU in bytes 12-47, three 12-byte samples (accel xyz, gyro xyz). The pad state only
+	 * updates once per report, so the same sample is repeated. */
+	if (imu_enabled_ && imu_valid_)
+	{
+		for (int i = 0; i < 3; ++i)
+			std::memcpy(report_.data() + 12 + i * sizeof(imu_sample_), &imu_sample_, sizeof(imu_sample_));
+	}
 }
 
 void SwitchDevice::build_subcommand_reply(const SwitchPro::SwitchReport& sw)
@@ -175,6 +181,7 @@ void SwitchDevice::build_subcommand_reply(const SwitchPro::SwitchReport& sw)
 			break;
 		case SwitchPro::SUBCMD_IMU:
 			r[0] = 0x80; r[1] = 0x40;
+			imu_enabled_ = pending_output_[11] != 0;  // host enables / disables the IMU
 			break;
 		case SwitchPro::SUBCMD_IMU_SENS:
 			r[0] = 0x80; r[1] = 0x41;
@@ -236,8 +243,8 @@ void SwitchDevice::build_subcommand_reply(const SwitchPro::SwitchReport& sw)
 			}
 			else if (addr_hi == 0x60 && addr_lo == 0x20)
 			{
-				const uint8_t sa[24] = { 0xCC, 0x00, 0x40, 0x00, 0x91, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0xE7, 0xFF, 0x0E, 0x00, 0xDC, 0xFF, 0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34 };
-				std::memcpy(r + 7, sa, 24);
+				/* Zero-offset factory IMU calibration matching switch_imu's scaling. */
+				std::memcpy(r + 7, switch_imu::kFactoryCalibration, 24);
 			}
 			else
 				std::memset(r + 7, 0xFF, read_len);
@@ -293,6 +300,7 @@ void SwitchDevice::process(const uint8_t idx, Gamepad& gamepad)
 	// Always read latest state and build report so get_report_cb and IN pushes both see current state (minimal latency).
 	Gamepad::PadIn gp_in = gamepad.get_pad_in();
 	gamepad_to_switch_report(gp_in, switch_report_, gamepad);
+	imu_valid_ = switch_imu::to_switch_sample(gp_in, imu_sample_);
 
 	bool is_subcommand = has_pending_output_;
 	if (has_pending_output_)

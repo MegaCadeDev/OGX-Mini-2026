@@ -164,6 +164,22 @@ Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 
 ---
 
+## Switch Pro output — motion
+
+**Goal:** Gyro / accelerometer in Switch Pro output mode (console, Steam Input, Linux `hid-nintendo`), from Joy-Cons (single or merged pair), DS4, DualSense and Switch Pro pads.
+
+**Problem:** The Switch output left the IMU bytes of the input report at zero, Joy-Cons were not a motion source at all, and a merged Joy-Con pair turned the IMU off on both halves.
+
+**Approach:**
+- `USBDevice/DeviceDriver/Switch/SwitchImu` converts `PadIn` motion into one Pro Controller IMU sample: Switch sources pass through (raw counts, gyro / 1000); DS4 and DualSense are rescaled (8192 per g, 1024 per deg/s → 4096 per g, 13371 / 936 per deg/s) and rotated to the Pro axes, `Pro = (-z, -x, y)` from the axes Bluepad32 delivers for them.
+- The Switch driver fills the three samples (report bytes 12–47) once the host enables the IMU (subcommand `0x40`), like the real controller, and answers SPI `0x6020` with a zero-offset factory IMU calibration that matches that scaling.
+- Joy-Cons are motion sources. `bluepad32_switch_pair_imu.diff`: a merged pair keeps (and parses) only one half's IMU and merges motion from it.
+- Adapter options (web app; CMake defaults): `OGXM_JOYCON_PAIR_IMU_SIDE` (`RIGHT` | `LEFT`, default `RIGHT`), `OGXM_JOYCON_PAIR_ORIENTATION` (`VERTICAL` | `HORIZONTAL`, default `VERTICAL`), `OGXM_JOYCON_SOLO_ORIENTATION` (default `HORIZONTAL`: a single Joy-Con held sideways, motion rotated 90° about Z). Invalid values fail the configure step.
+
+**Files:** `Switch/SwitchImu.*`, `Switch/Switch.*`, `Bluepad32/JoyConSettings.*`, `Bluepad32/Bluepad32.cpp`, `UserSettings/DongleSettings.*`, `CMakeLists.txt`, `patch_libs.cmake`, `bluepad32_switch_pair_imu.diff`.
+
+---
+
 ## Switch 2 Pro — anti-deadzone and L3/R3
 
 **Goal:** Fix WebApp **anti-deadzone** drift and **L3/R3** mapping on wired **Switch 2 Pro** ([#64](https://github.com/MegaCadeDev/OGX-Mini-2026/issues/64)).

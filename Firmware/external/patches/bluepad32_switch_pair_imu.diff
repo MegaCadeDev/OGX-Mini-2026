@@ -1,0 +1,68 @@
+diff --git a/src/components/bluepad32/include/parser/uni_hid_parser_switch.h b/src/components/bluepad32/include/parser/uni_hid_parser_switch.h
+index b2d928a..e85f160 100644
+--- a/src/components/bluepad32/include/parser/uni_hid_parser_switch.h
++++ b/src/components/bluepad32/include/parser/uni_hid_parser_switch.h
+@@ -28,6 +28,8 @@ void uni_hid_parser_switch_teardown(struct uni_hid_device_s* d);
+ void uni_hid_parser_switch_cleanup(struct uni_hid_device_s* d);
+ // Ask the pad to disconnect itself and sleep (subcommand 0x06 / 0x00).
+ void uni_hid_parser_switch_request_sleep(struct uni_hid_device_s* d);
++// Which half of a merged Joy-Con pair provides motion (true = right, the default).
++void uni_hid_parser_switch_set_pair_imu_side(bool right);
+ // While no rumble is playing, re-send a neutral rumble packet (heals a lost "stop").
+ void uni_hid_parser_switch_refresh_idle_rumble(struct uni_hid_device_s* d);
+ bool uni_hid_parser_switch_input_processed_in_parser(const struct uni_hid_device_s* d);
+diff --git a/src/components/bluepad32/parser/uni_hid_parser_switch.c b/src/components/bluepad32/parser/uni_hid_parser_switch.c
+index a6b25b3..41df30d 100644
+--- a/src/components/bluepad32/parser/uni_hid_parser_switch.c
++++ b/src/components/bluepad32/parser/uni_hid_parser_switch.c
+@@ -336,6 +336,14 @@ static const struct switch_rumble_amp_data rumble_amps[] = {
+ 
+ static uni_gamepad_t sw1_joycon_half_gp[CONFIG_BLUEPAD32_MAX_DEVICES];
+ 
++// Which half of a merged Joy-Con pair provides motion. Only that half
++// keeps its IMU on; the right one by default (most players aim with the right hand).
++static bool s_pair_imu_right = true;
++
++void uni_hid_parser_switch_set_pair_imu_side(bool right) {
++    s_pair_imu_right = right;
++}
++
+ static void parse_report_30(struct uni_hid_device_s* d, const uint8_t* report, int len);
+ static void parse_report_30_joycon_left(uni_hid_device_t* d, const struct switch_report_30_s* r);
+ static void parse_report_30_joycon_right(uni_hid_device_t* d, const struct switch_report_30_s* r);
+@@ -636,8 +644,8 @@ static void switch_establish_joycon_pair(uni_hid_device_t* d, int partner_idx) {
+     set_led(left_d, leds);
+     set_led(right_d, leds);
+ 
+-    switch_set_imu_enabled(left_d, false);
+-    switch_set_imu_enabled(right_d, false);
++    switch_set_imu_enabled(left_d, !s_pair_imu_right);
++    switch_set_imu_enabled(right_d, s_pair_imu_right);
+ 
+     logi("Switch: Joy-Con pair L@%d + R@%d -> player slot %d\n", left_idx, right_idx, output_idx);
+     uni_bt_bredr_scan_stop();
+@@ -678,9 +686,10 @@ static void switch_merge_joycon_pair(uni_gamepad_t* dst, const uni_gamepad_t* le
+     merged.buttons = left_gp->buttons | right_gp->buttons;
+     merged.misc_buttons = left_gp->misc_buttons | right_gp->misc_buttons;
+     merged.dpad = left_gp->dpad | right_gp->dpad;
++    const uni_gamepad_t* imu_gp = s_pair_imu_right ? right_gp : left_gp;
+     for (int i = 0; i < 3; i++) {
+-        merged.accel[i] = left_gp->accel[i];
+-        merged.gyro[i] = left_gp->gyro[i];
++        merged.accel[i] = imu_gp->accel[i];
++        merged.gyro[i] = imu_gp->gyro[i];
+     }
+     *dst = merged;
+ }
+@@ -1339,7 +1348,10 @@ static void parse_report_30(struct uni_hid_device_s* d, const uint8_t* report, i
+     // 3 gyro/accel frames are reported.
+     // Different approaches: take the latest one, or average them.
+     // We just take the latest one. If it is not accurate enough, we can average them.
+-    if (ins->mode == SWITCH_MODE_IMU && ins->pair_role == SWITCH_PAIR_NONE)
++    const enum switch_controller_types pair_imu_type =
++        s_pair_imu_right ? SWITCH_CONTROLLER_TYPE_JCR : SWITCH_CONTROLLER_TYPE_JCL;
++    if (ins->mode == SWITCH_MODE_IMU &&
++        (ins->pair_role == SWITCH_PAIR_NONE || ins->controller_type == pair_imu_type))
+         parse_imu(d, &r->imu[2]);
+ 
+     switch_maybe_process_joycon_input(d);

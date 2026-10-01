@@ -22,6 +22,10 @@ namespace dongle_settings {
 
     enum class Option : uint8_t {
         // Indices into Settings::option (wire bytes 1..7), added by the features using them.
+        // Index 0 is reserved.
+        JoyConPairImuRight = 1,     // merged Joy-Con pair: motion from the right half (else left)
+        JoyConPairHorizontal = 2,   // merged Joy-Con pair held sideways
+        JoyConSoloHorizontal = 3,   // single Joy-Con held sideways
     };
 
 #pragma pack(push, 1)
