@@ -152,6 +152,18 @@ Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 
 ---
 
+## Switch pads — rumble intensity
+
+**Goal:** A Joy-Con / Switch Pro driven by this dongle should vibrate at the strength the host actually requested, not the same strength for every non-zero magnitude.
+
+**Problem:** Bluepad32's Switch parser (`switch_play_dual_rumble_now`) passed the requested 0-255 magnitude as a **frequency** argument to `switch_encode_rumble` and used a fixed amplitude (500), so intensity barely changed and the controller instead played different pitches.
+
+**Approach:** Mirror DS4Windows's `SwitchProDevice.PrepareRumbleData`: keep the frequency fixed (320 Hz, both bands) and map the requested magnitude onto the amplitude table (`rumble_amps`, the same dekuNukem table DS4Windows uses), capped at 800 of the table's max 1003 — the same safety margin DS4Windows applies.
+
+**Files:** `Firmware/external/patches/bluepad32_switch_rumble_intensity.diff` (applied to `src/components/bluepad32/parser/uni_hid_parser_switch.c`).
+
+---
+
 ## Switch 2 Pro — anti-deadzone and L3/R3
 
 **Goal:** Fix WebApp **anti-deadzone** drift and **L3/R3** mapping on wired **Switch 2 Pro** ([#64](https://github.com/MegaCadeDev/OGX-Mini-2026/issues/64)).
