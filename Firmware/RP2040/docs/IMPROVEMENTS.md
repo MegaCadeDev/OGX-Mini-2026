@@ -152,6 +152,18 @@ Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 
 ---
 
+## Adapter options (web app)
+
+**Goal:** Dongle-wide options that a build gives a default to and users can still change from the web app, without a rebuild.
+
+**Format:** `UserSettings/DongleSettings` — 8 bytes, used as is in flash (key `dongle_cfg`) and on the wire: a version byte (`1`) then one byte per option (`0` / `1`). Each option has a fixed index and a default from a CMake option; a missing or other-version record falls back to the defaults.
+
+**Transport:** USB web app packets `GET_DONGLE_SETTINGS` (`0x70`, reply carries the 8 bytes) and `SET_DONGLE_SETTINGS` (`0x71`, stores and reboots); Bluetooth characteristic `12345678-1234-1234-1234-123456789060` (read, write stores and reboots like a profile write).
+
+**Adding an option:** next free index in `dongle_settings::Option`, its default in `defaults()` from a CMake option, read with `dongle_settings::enabled()`. Indices are part of the wire and flash format; never renumber them.
+
+---
+
 ## Switch 2 Pro — anti-deadzone and L3/R3
 
 **Goal:** Fix WebApp **anti-deadzone** drift and **L3/R3** mapping on wired **Switch 2 Pro** ([#64](https://github.com/MegaCadeDev/OGX-Mini-2026/issues/64)).

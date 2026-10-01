@@ -10,6 +10,9 @@
 #include "Board/board_api.h"
 #include "UserSettings/UserSettings.h"
 
+/* Flash key of the adapter options (UserSettings/DongleSettings). */
+static const std::string DONGLE_SETTINGS_KEY = "dongle_cfg";
+
 static constexpr uint32_t BUTTON_COMBO(const uint16_t& buttons, const uint8_t& dpad = 0) {
     return (static_cast<uint32_t>(buttons) << 16) | static_cast<uint32_t>(dpad);
 }
@@ -543,6 +546,7 @@ void UserSettings::initialize_flash()
     if (read_init_flag == FLASH_INIT_FLAG)
     {
         OGXM_LOG("Flash already initialized: %i\n", read_init_flag);
+        load_dongle_settings();
         return;
     }
 
@@ -585,4 +589,23 @@ void UserSettings::initialize_flash()
     nvs_tool_.write(INIT_FLAG_KEY(), &init_flag_buffer, sizeof(uint8_t));
 
     OGXM_LOG("Flash initialized\n");
+    load_dongle_settings();
+}
+
+/* Adapter options from flash; build-time defaults when missing or of another version. */
+void UserSettings::load_dongle_settings()
+{
+    dongle_settings::Settings settings = dongle_settings::defaults();
+    uint8_t stored[sizeof(dongle_settings::Settings)]{};
+    if (nvs_tool_.read(DONGLE_SETTINGS_KEY, stored, sizeof(stored)))
+        dongle_settings::decode(stored, sizeof(stored), settings);
+    dongle_settings::set(settings);
+}
+
+bool UserSettings::store_dongle_settings(const dongle_settings::Settings& settings)
+{
+    board_api::usb::disconnect_all();
+    nvs_tool_.write(DONGLE_SETTINGS_KEY, &settings, sizeof(settings));
+    board_api::reboot();
+    return true;
 }
