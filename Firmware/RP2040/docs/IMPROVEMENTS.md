@@ -221,14 +221,16 @@ Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 | **USB VID:PID** | `054c:0ce6` (Sony DualSense) |
 | **Interfaces** | IF0: DualSense gamepad (64-byte HID report, ID `0x01`); IF1: relative HID mouse |
 | **DualSense input (BT or wired USB host)** | **`SteamPassthrough`** — full **64-byte** report copied each frame (ControllerMedic-style PS5 passthrough); wired host sticks/triggers taken from raw PS5 IN when available |
-| **Other input (Xbox, DS4, Switch Pro, etc.)** | **`SteamBtReport`** — synthesizes a DualSense **`PS5::InReport`** from PadIn / `uni_gamepad_t` (face → Cross/Circle/Square/Triangle, LB/RB → L1/R1, triggers, sticks, D-pad, Share/Options, PS, touchpad-click bit) |
+| **Other input (Xbox, DS4, Switch Pro, etc.)** | **`SteamBtReport`** — synthesizes a DualSense **`PS5::InReport`** from PadIn / `uni_gamepad_t` (face → Cross/Circle/Square/Triangle, LB/RB → L1/R1, triggers, sticks, D-pad, Share/Options, PS, touchpad-click bit); then `sony_reports::ds5_fill_synth` adds the fields a real DualSense carries: sequence number, **motion** in real DualSense units (16 per deg/s, 8192 per g), sensor clock (1/3 µs), **touch points** (DS4; "not touching" when there are none), **battery** |
+| **Feature reports** | Calibration (`0x05`, an ideal pad in those units), pairing info (`0x09`, a per-board MAC from the unique ID) and firmware info (`0x20`); they were all zeros, so hosts applying the calibration read motion wrong |
+| **Lightbar** | Host lightbar colour (output report, valid flag 1 bit 2) sent on to a DS4 / DualSense over Bluetooth |
 | **Descriptors** | `Descriptors/PS5Usb.h` (gamepad), `Descriptors/Steam.h` (composite + mouse interface) |
 
 ### Touchpad → mouse
 
 | Item | Detail |
 |------|--------|
-| **Input** | **DualSense (PS5)** — Bluetooth on Pico W / Pico 2 W (`uni_hid_parser_ds5_get_touchpad()`), or wired USB host (`PS5Host::process_report()` → `SteamPassthrough::store()`) |
+| **Input** | **DualSense (PS5)** — Bluetooth on Pico W / Pico 2 W (`uni_hid_parser_ds5_get_touchpad()`), or wired USB host (`PS5Host::process_report()` → `SteamPassthrough::store()`); **DualShock 4** over Bluetooth (`uni_hid_parser_ds4_get_touchpad()`, `bluepad32_ds4_touchpad.diff`), through the synthesized report |
 | **Output** | **`SteamTouchpad`** — touch finger deltas → **relative mouse** on IF1; touchpad click (`TP` / `MISC`) → **left button** |
 | **Report merge (BT)** | Raw touch bytes merged into USB report offset **33** (`SteamTouchpad::apply_to_passthrough()`) for Linux `hid-playstation` compatibility |
 | **No touchpad** | Mouse interface stays idle — no right-stick mouse fallback |
@@ -249,7 +251,7 @@ lsusb -v -d 054c:0ce6 2>/dev/null | grep -E "iProduct|bNumInterfaces|bEndpointAd
 sudo evtest   # select the mouse interface; drag touchpad for REL_X / REL_Y
 ```
 
-**Files:** `src/USBDevice/DeviceDriver/Steam/` (`Steam.cpp`, `SteamPassthrough.h`, `SteamBtReport.h`, `SteamTouchpad.cpp`), `src/Descriptors/PS5Usb.h`, `src/Descriptors/Steam.h`, `src/Bluepad32/Bluepad32.cpp`, `src/USBHost/HostDriver/PS5/PS5.cpp`, `WebApp/modules/userSettings.js` (mode label **SteamOS / Bazzite**).
+**Files:** `src/USBDevice/DeviceDriver/Steam/` (`Steam.cpp`, `SteamPassthrough.h`, `SteamBtReport.h`, `SteamTouchpad.cpp`), `src/USBDevice/DeviceDriver/Sony/` (`SonyReports.h`, `SonyImu.h`), `src/Board/BoardMac.h`, `src/Descriptors/PS5Usb.h`, `src/Descriptors/Steam.h`, `src/Bluepad32/Bluepad32.cpp`, `src/USBHost/HostDriver/PS5/PS5.cpp`, `WebApp/modules/userSettings.js` (mode label **SteamOS / Bazzite**).
 
 ---
 

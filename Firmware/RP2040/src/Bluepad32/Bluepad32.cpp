@@ -381,6 +381,28 @@ void set_rumble(uni_hid_device_t* bp_device, uint16_t length, uint8_t rumble_l, 
     }
 }
 
+/* Last lightbar colour sent to each DS4 / DualSense. */
+using Lightbar = Gamepad::Lightbar;
+static Lightbar s_lightbar_applied[CONFIG_BLUEPAD32_MAX_DEVICES];
+
+/* Send the host's lightbar colour (STEAM mode) to a DS4 / DualSense when it changes. Waits out
+ * the DS4 post-connect window like rumble does. */
+static void apply_host_lightbar(uni_hid_device_t* d, int bt_idx, const Lightbar& want, uint32_t now_ms)
+{
+    if (!want.valid || d->report_parser.set_lightbar_color == nullptr)
+        return;
+    if (d->controller_type != CONTROLLER_TYPE_PS4Controller &&
+        d->controller_type != CONTROLLER_TYPE_PS5Controller)
+        return;
+    if (d->controller_type == CONTROLLER_TYPE_PS4Controller && now_ms < s_ps4_rumble_ok_ms[bt_idx])
+        return;
+    Lightbar& have = s_lightbar_applied[bt_idx];
+    if (have.valid && have.r == want.r && have.g == want.g && have.b == want.b)
+        return;
+    d->report_parser.set_lightbar_color(d, want.r, want.g, want.b);
+    have = want;
+}
+
 static void send_feedback_cb(btstack_timer_source *ts)
 {
     uni_hid_device_t* bp_device = nullptr;
@@ -473,6 +495,7 @@ static void send_feedback_cb(btstack_timer_source *ts)
                 }
             }
         }
+        apply_host_lightbar(bp_device, i, bt_devices_[gp_idx].gamepad->get_host_lightbar(), now_ms);
     }
     if (feedback_timer_set_)
 	{
@@ -813,6 +836,7 @@ static void device_disconnected_cb(uni_hid_device_t* device) {
     s_sw2_ble_ka_last_ms[idx] = 0;
     s_bt_disconnect_combo_grace_until_ms[idx] = 0;
     s_ps4_rumble_ok_ms[idx] = 0;
+    s_lightbar_applied[idx] = Lightbar();
     prev_touchpad_clicked_[idx] = false;
     pending_adaptive_trigger_send_[idx] = false;
     /* Never clear PadIn for an OGX slot owned by USB (BT idx often equals USB pad 0). */
@@ -1299,19 +1323,27 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
         }
     }
 
+    /* Touchpad (DS4 and DualSense) and battery, for the output modes that report them. */
+    gp_in.battery = device->controller.battery;
+    if (device->controller_type == CONTROLLER_TYPE_PS4Controller ||
+        device->controller_type == CONTROLLER_TYPE_PS5Controller) {
+        uint8_t touch_points[8]{};
+        bool touchpad_click = false;
+        if (device->controller_type == CONTROLLER_TYPE_PS5Controller)
+            uni_hid_parser_ds5_get_touchpad(device, touch_points, &touchpad_click);
+        else
+            uni_hid_parser_ds4_get_touchpad(device, touch_points, &touchpad_click);
+        std::memcpy(gp_in.touch_raw, touch_points, sizeof(gp_in.touch_raw));
+        gp_in.touchpad_click = touchpad_click ? 1 : 0;
+        gp_in.touchpad_valid = 1;
+    }
+
     if (SteamActive::is_enabled()) {
         SteamPassthrough::input_has_touchpad =
             (device->controller_type == CONTROLLER_TYPE_PS5Controller);
         SteamBtReport::update_from_uni_gamepad(uni_gp);
-        if (device->controller_type == CONTROLLER_TYPE_PS5Controller) {
-            uint8_t touch_points[8]{};
-            bool touchpad_click = false;
-            uni_hid_parser_ds5_get_touchpad(device, touch_points, &touchpad_click);
-            SteamTouchpad::apply_to_passthrough(touch_points, touchpad_click);
-            std::memcpy(gp_in.touch_raw, touch_points, sizeof(gp_in.touch_raw));
-            gp_in.touchpad_click = touchpad_click ? 1 : 0;
-            gp_in.touchpad_valid = 1;
-        }
+        if (device->controller_type == CONTROLLER_TYPE_PS5Controller)
+            SteamTouchpad::apply_to_passthrough(gp_in.touch_raw, gp_in.touchpad_click != 0);
     }
 
     gamepad->set_pad_in_from_bluetooth(gp_in);
