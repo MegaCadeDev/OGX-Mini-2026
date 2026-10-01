@@ -175,13 +175,17 @@ function(apply_lib_patches EXTERNAL_DIR)
     # - setup robustness: per-step timeout + retries, stale-reply filtering, one pad in
     #   setup at a time, and timer cleanup before a device's parser data is wiped;
     # - request-sleep: subcommand 0x06/0x00 so a Joy-Con drops the link and sleeps;
-    # - pair IMU: a merged Joy-Con pair keeps (and parses) only the selected half's IMU.
+    # - pair IMU: a merged Joy-Con pair keeps (and parses) only the selected half's IMU;
+    # - rumble intensity: the requested magnitude sets the amplitude at a fixed frequency
+    #   (DS4Windows's SwitchProDevice.PrepareRumbleData) instead of being encoded as a
+    #   frequency with a fixed amplitude.
     ogxm_apply_patch_series("Bluepad32 Switch parser" "${BLUEPAD32_PATH}"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_enable_vibration.diff"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_setup_robustness.diff"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_request_sleep.diff"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_idle_rumble_refresh.diff"
-        "${EXTERNAL_DIR}/patches/bluepad32_switch_pair_imu.diff")
+        "${EXTERNAL_DIR}/patches/bluepad32_switch_pair_imu.diff"
+        "${EXTERNAL_DIR}/patches/bluepad32_switch_rumble_intensity.diff")
 
     # DS4 parser: keep the latest touch points for touchpad passthrough.
     ogxm_apply_patch_series("Bluepad32 DS4 parser" "${BLUEPAD32_PATH}"
