@@ -8,6 +8,7 @@
 #include "USBDevice/DeviceDriver/DeviceDriverTypes.h"
 #include "UserSettings/UserProfile.h"
 #include "UserSettings/NVSTool.h"
+#include "UserSettings/DongleSettings.h"
 #include "Gamepad/Gamepad.h"
 
 /** Input source for gamepad 0: USB/BT (default) or GPIO (PS1/PS2, GameCube, or Dreamcast controller). */
@@ -58,8 +59,12 @@ public:
     bool store_driver_type_only(DeviceDriverType new_driver_type);
     bool store_profile(uint8_t index, const UserProfile& profile);
     bool store_profile_and_driver_type(DeviceDriverType new_driver_type, uint8_t index, const UserProfile& profile);
+    /** Adapter options (web app). Stores them and reboots; call from Core0. */
+    bool store_dongle_settings(const dongle_settings::Settings& settings);
 
 private:
+    void load_dongle_settings();
+
     UserSettings() = default;
     ~UserSettings() = default;
     UserSettings(const UserSettings&) = delete;

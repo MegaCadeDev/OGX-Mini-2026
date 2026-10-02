@@ -26,6 +26,8 @@ namespace Handle {
     static constexpr uint16_t PROFILE  = ATT_CHARACTERISTIC_12345678_1234_1234_1234_123456789040_01_VALUE_HANDLE;
 
     static constexpr uint16_t GAMEPAD  = ATT_CHARACTERISTIC_12345678_1234_1234_1234_123456789050_01_VALUE_HANDLE;
+    /* Adapter options (UserSettings/DongleSettings). */
+    static constexpr uint16_t DONGLE_SETTINGS = ATT_CHARACTERISTIC_12345678_1234_1234_1234_123456789060_01_VALUE_HANDLE;
 }
 
 namespace ADV {
@@ -245,6 +247,13 @@ static uint16_t att_read_callback(  hci_con_handle_t connection_handle,
             }
             return profile_reader_.get_xfer_len();
 
+        case Handle::DONGLE_SETTINGS:
+            if (buffer) {
+                const dongle_settings::Settings& settings = dongle_settings::get();
+                std::memcpy(buffer, &settings, std::min<size_t>(sizeof(settings), buffer_size));
+            }
+            return static_cast<uint16_t>(sizeof(dongle_settings::Settings));
+
         case Handle::GAMEPAD:
             /* Legacy 23-byte layout expected by the web app (PadIn grew IMU and
              * touchpad fields), and never copy more than the ATT buffer holds. */
@@ -293,6 +302,23 @@ static int att_write_callback(  hci_con_handle_t connection_handle,
                 profile_writer_.commit_profile();
             }
             break;
+
+        case Handle::DONGLE_SETTINGS:
+        {
+            dongle_settings::Settings settings{};
+            if ((ret = verify_write(buffer_size, sizeof(settings))) != 0) {
+                break;
+            }
+            if (!dongle_settings::decode(buffer, buffer_size, settings)) {
+                ret = ATT_ERROR_VALUE_NOT_ALLOWED;
+                break;
+            }
+            /* Store and reboot from Core0, like a profile write. */
+            queue_disconnect(connection_handle, 500);
+            TaskQueue::Core0::queue_delayed_task(TaskQueue::Core0::get_new_task_id(), 1000, false,
+                [settings] { UserSettings::get_instance().store_dongle_settings(settings); });
+            break;
+        }
 
         default:
             break;
