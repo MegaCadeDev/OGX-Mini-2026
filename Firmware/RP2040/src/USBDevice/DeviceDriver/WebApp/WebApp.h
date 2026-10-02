@@ -29,6 +29,9 @@ private:
         GET_PROFILE_BY_IDX = 0x55,
         SET_PROFILE_START = 0x60,
         SET_PROFILE = 0x61,
+        /* Adapter options (UserSettings/DongleSettings, 8 bytes). */
+        GET_DONGLE_SETTINGS = 0x70,
+        SET_DONGLE_SETTINGS = 0x71,
         SET_GP_IN = 0x80,
         SET_GP_OUT = 0x81,
         RESP_ERROR = 0xFF
@@ -67,7 +70,8 @@ private:
     bool write_packet(const Packet& packet);
     bool write_profile(uint8_t index, const UserProfile& profile, PacketID packet_id);
     bool write_gamepad(uint8_t index, const Gamepad::PadIn& pad_in);
-    void write_error();  
+    void write_error();
+    bool write_dongle_settings();
 };
 
 #endif // _WEBAAPP_DEVICE_H_

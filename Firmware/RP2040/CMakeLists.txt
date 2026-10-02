@@ -60,6 +60,7 @@ set(SOURCES_BOARD
     ${SRC}/Board/board_api_private/board_api_usbh.cpp
     
     ${SRC}/UserSettings/UserSettings.cpp
+    ${SRC}/UserSettings/DongleSettings.cpp
     ${SRC}/UserSettings/UserProfile.cpp
     ${SRC}/UserSettings/JoystickSettings.cpp
     ${SRC}/UserSettings/TriggerSettings.cpp
