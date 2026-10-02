@@ -1,0 +1,4 @@
+# Exclude everything; allow only what the Dockerfile actually COPYs.
+*
+!Firmware/external/patches/
+!scripts/docker/container-build.sh
