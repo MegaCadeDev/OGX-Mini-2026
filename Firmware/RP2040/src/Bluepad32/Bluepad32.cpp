@@ -1276,8 +1276,19 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
             const bool paired = bp32_get_pair_partner_idx(device) >= 0;
             const bool left = paired ? !jc.pair_imu_right
                                      : device->controller_type == CONTROLLER_TYPE_SwitchJoyConLeft;
+            /* PadIn is packed, so accel / gyro are not 4-byte aligned: rotate aligned copies (a
+             * plain int32_t* to them lets the compiler use paired loads, which fault there). */
+            int32_t accel[3], gyro[3];
+            for (int i = 0; i < 3; i++) {
+                accel[i] = gp_in.accel[i];
+                gyro[i] = gp_in.gyro[i];
+            }
             joycon_settings::apply_orientation(left, paired ? jc.pair_orientation : jc.solo_orientation,
-                                               gp_in.accel, gp_in.gyro);
+                                               accel, gyro);
+            for (int i = 0; i < 3; i++) {
+                gp_in.accel[i] = accel[i];
+                gp_in.gyro[i] = gyro[i];
+            }
         }
     }
 
