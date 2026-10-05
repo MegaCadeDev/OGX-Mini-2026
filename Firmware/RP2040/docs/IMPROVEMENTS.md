@@ -190,6 +190,16 @@ Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 
 **Files:** `Firmware/external/patches/bluepad32_switch_rumble_intensity.diff` (applied to `src/components/bluepad32/parser/uni_hid_parser_switch.c`).
 
+## Bluetooth — output queue (stuck Switch rumble)
+
+**Goal:** A rumble "stop" sent to a Switch pad must always arrive, so the pad never keeps vibrating.
+
+**Problem:** Bluepad32 queues output reports it cannot send right away in a 32-slot queue and drops new ones when it is full. On a busy or weak link a burst of rumble updates filled it, the queued "stop" was dropped and the pad kept vibrating. The earlier workaround re-sent a neutral rumble packet every second while idle (`Bluepad32/RumbleRefresh`).
+
+**Approach:** Backport of Bluepad32's byte-stream output queue (ricardoquesada/bluepad32 b6531db): a 4 KB ring buffer holding about 270 rumble packets instead of 31. The idle refresh is removed; the 350 ms Switch rumble duration stays (`Bluepad32/RumbleTiming.h`).
+
+**Files:** `Firmware/external/patches/bluepad32_output_ring_buffer.diff` (applied to `uni_circular_buffer.c/.h` and `uni_hid_device.c`), `Firmware/cmake/patch_libs.cmake`.
+
 ---
 
 ## Switch 2 Pro — anti-deadzone and L3/R3
