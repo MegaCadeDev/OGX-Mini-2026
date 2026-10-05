@@ -183,13 +183,17 @@ function(apply_lib_patches EXTERNAL_DIR)
         "${EXTERNAL_DIR}/patches/bluepad32_switch_enable_vibration.diff"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_setup_robustness.diff"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_request_sleep.diff"
-        "${EXTERNAL_DIR}/patches/bluepad32_switch_idle_rumble_refresh.diff"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_pair_imu.diff"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_rumble_intensity.diff")
 
     # DS4 parser: keep the latest touch points for touchpad passthrough.
     ogxm_apply_patch_series("Bluepad32 DS4 parser" "${BLUEPAD32_PATH}"
         "${EXTERNAL_DIR}/patches/bluepad32_ds4_touchpad.diff")
+
+    # Output queue: byte-stream ring buffer, backport of ricardoquesada/bluepad32 b6531db. The old
+    # 32-slot queue dropped packets when full, a queued rumble "stop" among them (stuck rumble).
+    ogxm_apply_patch_series("Bluepad32 output queue" "${BLUEPAD32_PATH}"
+        "${EXTERNAL_DIR}/patches/bluepad32_output_ring_buffer.diff")
 
     # Pico SDK 2.1.x still lists BTstack's old hids_client.c; Bluepad32's BTstack
     # v1.8 renamed it to hids_host.c. Patch the SDK cmake when using that tree.

@@ -28,7 +28,7 @@ static std::atomic<bool> s_bt_any_connected_cached{false};
 #include "Board/board_api.h"
 #include "Board/ogxm_log.h"
 #include "Bluepad32/JoyConSettings.h"
-#include "Bluepad32/RumbleRefresh.h"
+#include "Bluepad32/RumbleTiming.h"
 #include "Bluepad32/ScanPolicy.h"
 #include "Input/InputSlot.h"
 #include "USBHost/HostDriver/FlydigiApex4Wukong/FlydigiApex4WukongBtProbe.h"
@@ -181,9 +181,7 @@ static void schedule_disconnect_combo(int idx)
 }
 
 static constexpr uint32_t FEEDBACK_TIME_MS = 250;
-static_assert(FEEDBACK_TIME_MS == switch_rumble::kFeedbackPeriodMs, "keep Bluepad32/RumbleRefresh.h in sync");
-/* Neutral rumble refresh for Switch pads while idle (see Bluepad32/RumbleRefresh.h). */
-static switch_rumble::IdleRefresh s_sw_idle_rumble[CONFIG_BLUEPAD32_MAX_DEVICES];
+static_assert(FEEDBACK_TIME_MS == switch_rumble::kFeedbackPeriodMs, "keep Bluepad32/RumbleTiming.h in sync");
 static constexpr uint32_t LED_CHECK_TIME_MS = 500;
 static constexpr uint32_t LED_FAST_BLINK_MS = 250;   // full search for new controllers
 static constexpr uint32_t LED_SLOW_BLINK_MS = 1000;  // reduced search
@@ -371,7 +369,7 @@ void set_rumble(uni_hid_device_t* bp_device, uint16_t length, uint8_t rumble_l, 
         case CONTROLLER_TYPE_SwitchJoyConRight:
         case CONTROLLER_TYPE_SwitchJoyConLeft:
             /* Outlive the feedback period so a long rumble isn't stopped and restarted on
-             * every cycle (see Bluepad32/RumbleRefresh.h). */
+             * every cycle (see Bluepad32/RumbleTiming.h). */
             (void)length;
             uni_hid_parser_switch_play_dual_rumble(bp_device, 0, switch_rumble::kRumbleDurationMs, rumble_l, rumble_r);
             break;
@@ -484,8 +482,6 @@ static void send_feedback_cb(btstack_timer_source *ts)
                 s_sw2_ble_ka_last_ms[i] = now_ms;
             }
         }
-        if (s_sw_idle_rumble[i].tick(now_ms, gp_out.rumble_l > 0 || gp_out.rumble_r > 0))
-            uni_hid_parser_switch_refresh_idle_rumble(bp_device);  // no-op for non-Switch pads
         if (gp_out.rumble_l > 0 || gp_out.rumble_r > 0)
         {
             if (bp_device->controller_type == CONTROLLER_TYPE_PS4Controller &&

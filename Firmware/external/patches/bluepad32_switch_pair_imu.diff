@@ -1,5 +1,5 @@
 diff --git a/src/components/bluepad32/include/parser/uni_hid_parser_switch.h b/src/components/bluepad32/include/parser/uni_hid_parser_switch.h
-index b2d928a..e85f160 100644
+index 87457cb..a1633f0 100644
 --- a/src/components/bluepad32/include/parser/uni_hid_parser_switch.h
 +++ b/src/components/bluepad32/include/parser/uni_hid_parser_switch.h
 @@ -28,6 +28,8 @@ void uni_hid_parser_switch_teardown(struct uni_hid_device_s* d);
@@ -8,11 +8,11 @@ index b2d928a..e85f160 100644
  void uni_hid_parser_switch_request_sleep(struct uni_hid_device_s* d);
 +// Which half of a merged Joy-Con pair provides motion (true = right, the default).
 +void uni_hid_parser_switch_set_pair_imu_side(bool right);
- // While no rumble is playing, re-send a neutral rumble packet (heals a lost "stop").
- void uni_hid_parser_switch_refresh_idle_rumble(struct uni_hid_device_s* d);
  bool uni_hid_parser_switch_input_processed_in_parser(const struct uni_hid_device_s* d);
+ bool uni_hid_parser_switch_solo_needs_partner(const struct uni_hid_device_s* d);
+ bool uni_hid_parser_switch_any_awaiting_partner(void);
 diff --git a/src/components/bluepad32/parser/uni_hid_parser_switch.c b/src/components/bluepad32/parser/uni_hid_parser_switch.c
-index a6b25b3..41df30d 100644
+index 44a0991..dccbde1 100644
 --- a/src/components/bluepad32/parser/uni_hid_parser_switch.c
 +++ b/src/components/bluepad32/parser/uni_hid_parser_switch.c
 @@ -336,6 +336,14 @@ static const struct switch_rumble_amp_data rumble_amps[] = {
@@ -30,7 +30,7 @@ index a6b25b3..41df30d 100644
  static void parse_report_30(struct uni_hid_device_s* d, const uint8_t* report, int len);
  static void parse_report_30_joycon_left(uni_hid_device_t* d, const struct switch_report_30_s* r);
  static void parse_report_30_joycon_right(uni_hid_device_t* d, const struct switch_report_30_s* r);
-@@ -636,8 +644,8 @@ static void switch_establish_joycon_pair(uni_hid_device_t* d, int partner_idx) {
+@@ -617,8 +625,8 @@ static void switch_establish_joycon_pair(uni_hid_device_t* d, int partner_idx) {
      set_led(left_d, leds);
      set_led(right_d, leds);
  
@@ -41,7 +41,7 @@ index a6b25b3..41df30d 100644
  
      logi("Switch: Joy-Con pair L@%d + R@%d -> player slot %d\n", left_idx, right_idx, output_idx);
      uni_bt_bredr_scan_stop();
-@@ -678,9 +686,10 @@ static void switch_merge_joycon_pair(uni_gamepad_t* dst, const uni_gamepad_t* le
+@@ -659,9 +667,10 @@ static void switch_merge_joycon_pair(uni_gamepad_t* dst, const uni_gamepad_t* le
      merged.buttons = left_gp->buttons | right_gp->buttons;
      merged.misc_buttons = left_gp->misc_buttons | right_gp->misc_buttons;
      merged.dpad = left_gp->dpad | right_gp->dpad;
@@ -54,7 +54,7 @@ index a6b25b3..41df30d 100644
      }
      *dst = merged;
  }
-@@ -1339,7 +1348,10 @@ static void parse_report_30(struct uni_hid_device_s* d, const uint8_t* report, i
+@@ -1320,7 +1329,10 @@ static void parse_report_30(struct uni_hid_device_s* d, const uint8_t* report, i
      // 3 gyro/accel frames are reported.
      // Different approaches: take the latest one, or average them.
      // We just take the latest one. If it is not accurate enough, we can average them.
