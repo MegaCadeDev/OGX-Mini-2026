@@ -174,12 +174,14 @@ function(apply_lib_patches EXTERNAL_DIR)
     # - enable vibration (subcommand 0x48) during setup: Joy-Cons ignore rumble until then;
     # - setup robustness: per-step timeout + retries, stale-reply filtering, one pad in
     #   setup at a time, and timer cleanup before a device's parser data is wiped;
-    # - request-sleep: subcommand 0x06/0x00 so a Joy-Con drops the link and sleeps.
+    # - request-sleep: subcommand 0x06/0x00 so a Joy-Con drops the link and sleeps;
+    # - pair IMU: a merged Joy-Con pair keeps (and parses) only the selected half's IMU.
     ogxm_apply_patch_series("Bluepad32 Switch parser" "${BLUEPAD32_PATH}"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_enable_vibration.diff"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_setup_robustness.diff"
         "${EXTERNAL_DIR}/patches/bluepad32_switch_request_sleep.diff"
-        "${EXTERNAL_DIR}/patches/bluepad32_switch_idle_rumble_refresh.diff")
+        "${EXTERNAL_DIR}/patches/bluepad32_switch_idle_rumble_refresh.diff"
+        "${EXTERNAL_DIR}/patches/bluepad32_switch_pair_imu.diff")
 
     # Pico SDK 2.1.x still lists BTstack's old hids_client.c; Bluepad32's BTstack
     # v1.8 renamed it to hids_host.c. Patch the SDK cmake when using that tree.

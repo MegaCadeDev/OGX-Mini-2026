@@ -216,6 +216,20 @@ bool WebAppDevice::write_gamepad(uint8_t index, const Gamepad::PadIn& pad_in)
     return true;
 }
 
+/* Adapter options, one packet (version byte first). */
+bool WebAppDevice::write_dongle_settings()
+{
+    Packet packet_in;
+    const dongle_settings::Settings& settings = dongle_settings::get();
+    packet_in.header.packet_id = PacketID::GET_DONGLE_SETTINGS;
+    packet_in.header.max_gamepads = MAX_GAMEPADS;
+    packet_in.header.chunks_total = 1;
+    packet_in.header.chunk_idx = 0;
+    packet_in.header.chunk_len = sizeof(settings);
+    std::memcpy(packet_in.data.data(), &settings, sizeof(settings));
+    return write_packet(packet_in);
+}
+
 void WebAppDevice::write_error()
 {
     Packet packet_in;
@@ -292,6 +306,26 @@ void WebAppDevice::process(const uint8_t idx, Gamepad& gamepad)
                     return;
                 }
                 break;
+
+            case PacketID::GET_DONGLE_SETTINGS:
+                if (!write_dongle_settings())
+                {
+                    write_error();
+                    return;
+                }
+                break;
+
+            case PacketID::SET_DONGLE_SETTINGS:
+            {
+                dongle_settings::Settings settings{};
+                if (!dongle_settings::decode(packet_out.data.data(), packet_out.header.chunk_len, settings))
+                {
+                    write_error();
+                    return;
+                }
+                user_settings_.store_dongle_settings(settings);  // reboots
+                break;
+            }
 
             default:
                 // write_response(PacketID::RESP_ERROR);
