@@ -61,9 +61,14 @@ public:
     bool store_profile_and_driver_type(DeviceDriverType new_driver_type, uint8_t index, const UserProfile& profile);
     /** Adapter options (web app). Stores them and reboots; call from Core0. */
     bool store_dongle_settings(const dongle_settings::Settings& settings);
+    /** Diagnostics: the stored session summary and crash record, at boot. */
+    void load_diag_session();
+    /** Diagnostics: store the session summary, then reboot (last controller gone); call from Core0. */
+    void store_diag_session_and_reboot();
 
 private:
     void load_dongle_settings();
+    void keep_diag_session();
 
     UserSettings() = default;
     ~UserSettings() = default;

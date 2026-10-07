@@ -227,6 +227,12 @@ struct BTDevice {
 };
 
 BTDevice bt_devices_[CONFIG_BLUEPAD32_MAX_DEVICES];
+/* The reboot after the last controller disconnects stores the diagnostics session summary first
+ * (Diagnostics/Diagnostics.h). Flash is written from Core0 (the USB loop), which BT cannot park,
+ * so the BT core asks and Core0 stores and reboots; the watchdog armed for that reboot still
+ * fires if Core0 does not. */
+static std::atomic<bool> s_store_session_and_reboot{false};
+
 btstack_timer_source_t feedback_timer_;
 btstack_timer_source_t led_timer_;
 bool led_timer_set_{false};
@@ -850,8 +856,8 @@ static bool s_bt_disconnect_reboot_pending = false;
 static void bt_disconnect_reboot_cb(btstack_timer_source_t* ts) {
     (void)ts;
     s_bt_disconnect_reboot_pending = false;
-    printf("[BP32] Last Xbox BLE controller disconnected — restarting Pico for clean reconnect\n");
-    board_api::reboot();
+    printf("[BP32] Last controller disconnected — storing the session, then restarting\n");
+    s_store_session_and_reboot.store(true);  // Core0: UserSettings stores it and reboots
 }
 
 /** Xbox Series / One S over BLE (HOGP) — in-place reconnect leaves HIDS/bond state bad. */
@@ -976,6 +982,13 @@ static void device_disconnected_cb(uni_hid_device_t* device) {
     gamesir_cyclone2_bt_on_disconnected(device);
     {
         const uint32_t now = to_ms_since_boot(get_absolute_time());
+        /* The last ready controller going away ends the session: freeze its summary while the
+         * controller is still in it (it is stored before the reboot below). */
+        bool others = false;
+        for (int i = 0; i < CONFIG_BLUEPAD32_MAX_DEVICES; ++i)
+            others |= i != idx && bt_devices_[i].connected;
+        if (!others && s_bt_slot_was_ready[idx])
+            diag::session_freeze(now);
         diag::slot_disconnected(static_cast<size_t>(idx), now);
         diag::event(now, "slot %d disconnected: %s", idx, device->name);
     }
@@ -1649,6 +1662,10 @@ void wired_usb_release_enable_bt_pairing() {
 #else
     uni_bt_enable_new_connections_safe(true);
 #endif
+}
+
+bool take_store_session_and_reboot() {
+    return s_store_session_and_reboot.exchange(false);
 }
 
 void on_usb_device_resume() {

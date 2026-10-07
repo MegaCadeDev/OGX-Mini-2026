@@ -5,6 +5,7 @@
 
 #include "Diagnostics/Diagnostics.h"
 #include "Diagnostics/DiagnosticsBoard.h"
+#include "Gamepad/Gamepad.h"
 #include "UserSettings/UserSettings.h"
 
 #ifndef OGXM_BOARD_NAME
@@ -12,6 +13,22 @@
 #endif
 
 namespace diag {
+
+namespace {
+Gamepad* s_latency_gamepad = nullptr;
+
+Latency gamepad_latency()
+{
+    const Gamepad::LatencyStats st = s_latency_gamepad->latency_stats();
+    return Latency{st.samples, st.avg_us, st.max_us};
+}
+} // namespace
+
+void set_latency_gamepad(Gamepad* gamepad)
+{
+    s_latency_gamepad = gamepad;
+    set_latency_source(gamepad ? gamepad_latency : nullptr);
+}
 
 const char* driver_name(DeviceDriverType type)
 {
@@ -39,10 +56,10 @@ const char* driver_name(DeviceDriverType type)
 
 void board_boot()
 {
-    /* watchdog_reboot() (mode change, settings saved) leaves scratch 4 clear; a watchdog that
+    /* watchdog_reboot() (mode change, settings saved, last controller gone) leaves scratch 4 clear; a watchdog that
      * fired because something hung leaves the "enabled" marker. */
     const char* reset = watchdog_enable_caused_reboot() ? "watchdog timeout (hang recovery)"
-                        : watchdog_caused_reboot()      ? "reboot (mode change / settings saved)"
+                        : watchdog_caused_reboot()      ? "reboot (mode change, settings saved or last controller gone)"
                                                         : "power-on or reset";
     const DeviceDriverType mode = UserSettings::get_instance().get_current_driver();
 #if defined(CONFIG_OGXM_DEBUG)
@@ -57,6 +74,7 @@ void board_boot()
 #endif
     init(BoardInfo{FIRMWARE_VERSION, OGXM_BOARD_NAME, chip, clock_get_hz(clk_sys) / 1000000, build,
                    driver_name(mode), reset, MAX_GAMEPADS});
+    UserSettings::get_instance().load_diag_session();
     event(to_ms_since_boot(get_absolute_time()), "boot: mode %s, last reset: %s", driver_name(mode), reset);
 }
 

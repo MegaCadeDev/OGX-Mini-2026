@@ -19,6 +19,7 @@
 #include "Board/board_api.h"
 #include "Board/ogxm_log.h"
 #include "UserSettings/UserSettings.h"
+#include "Diagnostics/DiagnosticsBoard.h"
 #include "Gamepad/Gamepad.h"
 #include "Gamepad/I2CWirePad.h"
 #include "TaskQueue/TaskQueue.h"
@@ -418,6 +419,7 @@ void four_ch_i2c::host_mounted_w_type(bool mounted, HostDriverType host_type) {
 }
 
 void four_ch_i2c::initialize() {
+    diag::set_latency_gamepad(&_gamepads[0]);  // input-to-use latency in the diagnostics
     UserSettings& user_settings = UserSettings::get_instance();
     user_settings.initialize_flash();
 
