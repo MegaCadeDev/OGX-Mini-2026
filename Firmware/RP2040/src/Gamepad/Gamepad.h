@@ -134,12 +134,14 @@ public:
                    motion_source == MOTION_SRC_WII_BT;
         }
 
-        /** DualSense touchpad raw bytes (Steam mode mouse). Wire format: 8 bytes at DS5 touch offset. */
+        /** DS4 / DualSense touchpad raw bytes: 2 touch points x 4 bytes, the same wire format on
+         *  both pads (bit 7 of a point's first byte set = not touching). */
         uint8_t touch_raw[8];
         uint8_t touchpad_click;
-        /** Set when touch_raw was filled from a DS5 report this frame. */
+        /** Set when touch_raw was filled from a DS4 / DS5 report this frame. */
         uint8_t touchpad_valid;
-        uint8_t touchpad_reserved;
+        /** Pad battery, Bluepad32 scale (0 = unknown, 1..255). */
+        uint8_t battery;
 
         PadIn()
         {
@@ -275,6 +277,29 @@ public:
         mutex_exit(&pad_out_mutex_);
 
         return pad_out;
+    }
+
+    /* Lightbar colour requested by the host (STEAM mode), kept apart from PadOut so the
+     * PadOut wire layout (I2C boards) doesn't change. */
+    struct Lightbar
+    {
+        uint8_t r{0}, g{0}, b{0};
+        bool valid{false};
+    };
+
+    inline void set_host_lightbar(uint8_t r, uint8_t g, uint8_t b)
+    {
+        mutex_enter_blocking(&pad_out_mutex_);
+        host_lightbar_ = Lightbar{r, g, b, true};
+        mutex_exit(&pad_out_mutex_);
+    }
+
+    inline Lightbar get_host_lightbar()
+    {
+        mutex_enter_blocking(&pad_out_mutex_);
+        Lightbar l = host_lightbar_;
+        mutex_exit(&pad_out_mutex_);
+        return l;
     }
 
     inline ChatpadIn get_chatpad_in()
@@ -440,6 +465,7 @@ public:
         mutex_enter_blocking(&pad_out_mutex_);
         pad_out_ = PadOut();
         peak_out_ = PadOut();
+        host_lightbar_ = Lightbar();
         new_pad_out_.store(true);
         mutex_exit(&pad_out_mutex_);
     }
@@ -566,6 +592,7 @@ private:
 
     PadOut pad_out_;
     PadOut peak_out_;  // strongest rumble since the last take_pad_out_peak()
+    Lightbar host_lightbar_;
     PadIn pad_in_queue_[PAD_IN_QUEUE_SIZE];
     unsigned pad_in_head_{0};
     unsigned pad_in_tail_{0};
