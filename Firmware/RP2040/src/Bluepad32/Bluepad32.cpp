@@ -29,6 +29,7 @@ static std::atomic<bool> s_bt_any_connected_cached{false};
 #include "Board/ogxm_log.h"
 #include "Bluepad32/JoyConSettings.h"
 #include "Bluepad32/RumbleRefresh.h"
+#include "Bluepad32/ScanPolicy.h"
 #include "Input/InputSlot.h"
 #include "USBHost/HostDriver/FlydigiApex4Wukong/FlydigiApex4WukongBtProbe.h"
 #include "USBHost/HostDriver/FlydigiApex4Wukong/FlydigiApex4WukongBt.h"
@@ -184,6 +185,12 @@ static_assert(FEEDBACK_TIME_MS == switch_rumble::kFeedbackPeriodMs, "keep Bluepa
 /* Neutral rumble refresh for Switch pads while idle (see Bluepad32/RumbleRefresh.h). */
 static switch_rumble::IdleRefresh s_sw_idle_rumble[CONFIG_BLUEPAD32_MAX_DEVICES];
 static constexpr uint32_t LED_CHECK_TIME_MS = 500;
+static constexpr uint32_t LED_FAST_BLINK_MS = 250;   // full search for new controllers
+static constexpr uint32_t LED_SLOW_BLINK_MS = 1000;  // reduced search
+
+/* Search for new controllers while others are connected (Bluepad32/ScanPolicy.h). */
+static void apply_scan_policy(int exclude_idx, bool force = false);
+static bool scan_reduced();
 /** Idle pairing health check — restarts BR/LE scan if they died during long USB suspend (e.g. 360 standby). */
 static constexpr uint32_t PAIRING_WATCHDOG_MS = 45000;
 /** If no HID input report reaches us for this long while "connected", the BT link is zombie
@@ -474,6 +481,7 @@ static void send_feedback_cb(btstack_timer_source *ts)
             }
         }
     }
+    apply_scan_policy(-1);  // the slot-open time, and a Joy-Con pair completed after device_ready
     if (feedback_timer_set_)
 	{
         btstack_run_loop_set_timer(ts, FEEDBACK_TIME_MS);
@@ -492,10 +500,20 @@ static void check_led_cb(btstack_timer_source *ts)
 #else
     const bool wired_host_pad = false;
 #endif
-    /* Solid LED when a BT pad is connected or a wired USB host controller is active (Pico W mux). */
-    board_api::set_led((any_connected() || wired_host_pad) ? true : led_state);
+    /* The LED shows the search for new controllers (Bluepad32/ScanPolicy.h): fast blink = full
+     * search, slow blink = reduced (a slot open for over a minute, e.g. a lone Joy-Con), solid =
+     * no search (every slot in use, or a wired USB host controller active on the Pico W mux).
+     * Written only when it changes: on a Pico W the LED is on the CYW43, each write is a bus
+     * transfer. */
+    static int s_led_shown = -1;
+    const bool searching = !wired_host_pad && uni_bt_enable_new_connections_is_enabled();
+    const int led = (searching ? led_state : true) ? 1 : 0;
+    if (led != s_led_shown) {
+        board_api::set_led(led != 0);
+        s_led_shown = led;
+    }
 
-    btstack_run_loop_set_timer(ts, LED_CHECK_TIME_MS);
+    btstack_run_loop_set_timer(ts, searching && scan_reduced() ? LED_SLOW_BLINK_MS : LED_FAST_BLINK_MS);
     btstack_run_loop_add_timer(ts);
 }
 
@@ -606,6 +624,133 @@ static bool device_is_ble_hogp(const uni_hid_device_t* d) {
         gap_get_connection_type(d->conn.handle) == GAP_CONNECTION_LE)
         return true;
     return false;
+}
+
+/* Search for new controllers only as hard as the free slots need (Bluepad32/ScanPolicy.h). */
+static scan_policy::Scan s_scan_state = scan_policy::Scan::Full;
+
+static bool scan_reduced()
+{
+    return s_scan_state == scan_policy::Scan::Reduced;
+}
+
+/* Restart the periodic inquiry with new timing. gap_inquiry_stop() only asks the controller to
+ * leave periodic inquiry; gap_inquiry_periodic_start() refuses (COMMAND_DISALLOWED) until that is
+ * done, so the restart is retried from a timer until BTstack accepts it. */
+static btstack_timer_source_t s_inquiry_restart_timer;
+static uint8_t s_inquiry_restart_tries = 0;
+static uint16_t s_inquiry_min = scan_policy::kFullMinPeriod, s_inquiry_max = scan_policy::kFullMaxPeriod;
+
+static void inquiry_restart_cb(btstack_timer_source_t* ts)
+{
+    /* The search may have been turned off meanwhile (the other Joy-Con paired). */
+    if (s_scan_state == scan_policy::Scan::Off || !uni_bt_enable_new_connections_is_enabled())
+        return;
+    const uint8_t status = gap_inquiry_periodic_start(scan_policy::kInquiryLength, s_inquiry_max, s_inquiry_min);
+    if (status == ERROR_CODE_COMMAND_DISALLOWED && ++s_inquiry_restart_tries < 40) {
+        btstack_run_loop_set_timer(ts, 50);
+        btstack_run_loop_add_timer(ts);
+    }
+}
+
+static void restart_inquiry(uint16_t min_period, uint16_t max_period)
+{
+    s_inquiry_min = min_period;
+    s_inquiry_max = max_period;
+    uni_bt_set_gap_min_peridic_length(min_period);  // later starts by Bluepad32 use it too
+    uni_bt_set_gap_max_peridic_length(max_period);
+    gap_inquiry_stop();
+    btstack_run_loop_remove_timer(&s_inquiry_restart_timer);
+    s_inquiry_restart_tries = 0;
+    s_inquiry_restart_timer.process = inquiry_restart_cb;
+    btstack_run_loop_set_timer(&s_inquiry_restart_timer, 20);
+    btstack_run_loop_add_timer(&s_inquiry_restart_timer);
+}
+
+/* exclude_idx: a pad that is going away. force: apply again even if the state did not change
+ * (on every pad change: the Joy-Con code turns the search back on by itself for a lone Joy-Con). */
+static void apply_scan_policy(int exclude_idx, bool force)
+{
+#if defined(CONFIG_TARGET_PICO_W)
+    bool used[MAX_GAMEPADS]{};
+    int outputs = 0;
+    bool classic = false, hogp = false;
+    for (int i = 0; i < CONFIG_BLUEPAD32_MAX_DEVICES; ++i) {
+        if (i == exclude_idx || !bt_devices_[i].connected)
+            continue;
+        uni_hid_device_t* d = uni_hid_device_get_instance_for_idx(i);
+        if (!d)
+            continue;
+        if (device_is_ble_hogp(d)) hogp = true;
+        else if (gap_get_connection_type(d->conn.handle) == GAP_CONNECTION_ACL) classic = true;
+        const int out = bp32_get_gamepad_output_idx(d);
+        if (out >= 0 && out < static_cast<int>(MAX_GAMEPADS) && !used[out]) {
+            used[out] = true;
+            ++outputs;
+        }
+    }
+    const bool awaiting = uni_hid_parser_switch_any_awaiting_partner();
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+
+    /* How long a slot has been open with pads connected; a pad going away restarts the count. */
+    static bool s_open = false;
+    static uint32_t s_open_since = 0;
+    if (exclude_idx >= 0)
+        s_open = false;
+    const bool open = awaiting || (outputs > 0 && outputs < static_cast<int>(MAX_GAMEPADS));
+    if (open && !s_open)
+        s_open_since = now;
+    s_open = open;
+    const scan_policy::Scan want = scan_policy::decide(outputs, MAX_GAMEPADS, awaiting, open ? now - s_open_since : 0);
+
+    const bool off_undone = want == scan_policy::Scan::Off && uni_bt_enable_new_connections_is_enabled();
+    if (want == s_scan_state && !force && !off_undone)
+        return;
+    const scan_policy::Scan previous = s_scan_state;
+    s_scan_state = want;
+
+    switch (want) {
+        case scan_policy::Scan::Off:
+            uni_bt_enable_new_connections_unsafe(false);  // stops BR/EDR inquiry and the BLE scan
+            uni_bt_bredr_scan_stop();                     // also when started outside that flag
+            uni_bt_le_scan_stop();
+            break;
+        case scan_policy::Scan::Reduced:
+        case scan_policy::Scan::Full: {
+            const bool reduced = want == scan_policy::Scan::Reduced;
+            gap_set_scan_parameters(0, reduced ? scan_policy::kReducedInterval : scan_policy::kFullInterval,
+                                    reduced ? scan_policy::kReducedWindow : scan_policy::kFullWindow);
+            const uint16_t min_period = reduced ? scan_policy::kReducedMinPeriod : scan_policy::kFullMinPeriod;
+            const uint16_t max_period = reduced ? scan_policy::kReducedMaxPeriod : scan_policy::kFullMaxPeriod;
+            if (outputs <= 0 && !awaiting) {
+                /* No pad: the pairing paths (restore_bt_pairing_mode) run the search. */
+                uni_bt_set_gap_min_peridic_length(min_period);
+                uni_bt_set_gap_max_peridic_length(max_period);
+                break;
+            }
+            if (!uni_bt_enable_new_connections_is_enabled())
+                uni_bt_enable_new_connections_unsafe(true);  // starts BR/EDR inquiry and the BLE scan
+            if (awaiting) {
+                /* Lone Joy-Con: BLE scan off (as its own path does), inquiry with this timing. */
+                uni_bt_le_scan_stop();
+                if (force || previous != want)
+                    restart_inquiry(min_period, max_period);
+            } else {
+                uni_bt_set_gap_min_peridic_length(min_period);
+                uni_bt_set_gap_max_peridic_length(max_period);
+                uni_bt_le_scan_stop();  // new parameters apply when the scan starts
+                if (!hogp)
+                    uni_bt_le_scan_start();
+                if (classic || hogp)
+                    uni_bt_bredr_scan_stop();  // as device_ready does with a pad connected
+            }
+            break;
+        }
+    }
+#else
+    (void)exclude_idx;
+    (void)force;
+#endif
 }
 
 /** CYW43: periodic BR/EDR inquiry while a Classic ACL link is up can drop DS4/PS3 in ~1–2 s. */
@@ -837,6 +982,7 @@ static void device_disconnected_cb(uni_hid_device_t* device) {
         btstack_run_loop_remove_timer(&feedback_timer_);
     }
 
+    apply_scan_policy(idx, true);  // a slot is free again
     if (any_other_connected)
         return;
 
@@ -1018,11 +1164,8 @@ static uni_error_t device_ready_cb(uni_hid_device_t* device) {
         ds5_set_adaptive_trigger_effect(device, UNI_ADAPTIVE_TRIGGER_TYPE_RIGHT, &off);
     }
 
-    if (led_timer_set_) {
-        led_timer_set_ = false;
-        btstack_run_loop_remove_timer(&led_timer_);
-        board_api::set_led(true);
-    }
+    /* The LED timer keeps running: check_led_cb shows the search state (solid once it stops). */
+    apply_scan_policy(-1, true);  // a pad is ready
     if (!feedback_timer_set_) {
         feedback_timer_set_ = true;
         feedback_timer_.process = send_feedback_cb;
