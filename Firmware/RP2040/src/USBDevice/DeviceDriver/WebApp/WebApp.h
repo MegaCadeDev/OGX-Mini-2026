@@ -33,6 +33,8 @@ private:
         GET_DONGLE_SETTINGS = 0x70,
         SET_DONGLE_SETTINGS = 0x71,
         SET_GP_IN = 0x80,
+        /* Rumble test from the web app. Data: left (strong) motor 0-255, right (weak) motor
+         * 0-255, duration in ms (uint16, little-endian). Answered with an empty SET_GP_OUT. */
         SET_GP_OUT = 0x81,
         RESP_ERROR = 0xFF
     };
@@ -62,6 +64,8 @@ private:
 
     UserSettings& user_settings_{UserSettings::get_instance()};
     UserProfile profile_;
+    /* End of a rumble test (SET_GP_OUT): the pad keeps the last request otherwise. 0 = none. */
+    uint32_t rumble_test_until_ms_{0};
 
     bool read_profile(UserProfile& profile);
     bool read_serial(void* buffer, size_t len, bool block);
