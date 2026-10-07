@@ -57,20 +57,38 @@ jobs:
       # apt-get install is the step seen hanging (10+ min) on runners. Each attempt: apt's own
       # network retries/timeouts, finish any install a killed attempt left half-configured, then
       # install. A normal install takes 1-2 minutes.
+      # The toolchain is ~590 MB of packages; a slow Ubuntu mirror took longer than the install
+      # attempts allowed (e.g. EXTERNAL_4CH_I2C / OGX_LIVE on #130). Keep the downloaded .deb
+      # files in the Actions cache so later runs install without downloading them again.
+      - name: Cache toolchain packages
+        uses: actions/cache@v4
+        timeout-minutes: 8
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
+        with:
+          path: ~/apt-archives
+          key: apt-${{ runner.os }}-arm-none-eabi-v1
+
+      # Each attempt may take up to 15 minutes; apt resumes a partial download on the next one.
       - name: Install toolchain
         env:
           APT_OPTS: >-
             -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
             -o DPkg::Lock::Timeout=120
         run: |
+          mkdir -p "$HOME/apt-archives/partial"
+          export APT_OPTS="$APT_OPTS -o Dir::Cache::Archives=$HOME/apt-archives"
           .github/scripts/retry.sh 5 5m -- bash -c 'sudo apt-get $APT_OPTS update'
-          .github/scripts/retry.sh 5 5m -- bash -c '
+          .github/scripts/retry.sh 5 15m -- bash -c '
             sudo dpkg --configure -a &&
             sudo apt-get $APT_OPTS install -y \
               cmake ninja-build \
               gcc-arm-none-eabi \
               libnewlib-arm-none-eabi \
               libstdc++-arm-none-eabi-newlib'
+          # Let the cache step save the archives (apt leaves them owned by root).
+          sudo chown -R "$(id -u):$(id -g)" "$HOME/apt-archives"
 
       # A slow cache download gives up after a few minutes and the SDK is cloned instead.
       - name: Cache Pico SDK
