@@ -21,6 +21,7 @@
 #include "TaskQueue/TaskQueue.h"
 #include "Gamepad/Gamepad.h"
 #include "UserSettings/UserSettings.h"
+#include "Diagnostics/DiagnosticsBoard.h"
 #include "Board/board_api.h"
 #include "Board/board_api_private/board_api_private.h"
 #include "Board/ogxm_log.h"
@@ -197,6 +198,7 @@ void standard::host_mounted(bool host_mounted) {
 }
 
 void standard::initialize() {
+    diag::set_latency_gamepad(&_gamepads[0]);  // input-to-use latency in the diagnostics
     board_api::init_board();
 
     UserSettings& user_settings = UserSettings::get_instance();

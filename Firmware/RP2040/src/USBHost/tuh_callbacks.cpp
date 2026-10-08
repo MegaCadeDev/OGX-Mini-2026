@@ -6,6 +6,8 @@
 #include "class/hid/hid_host.h"
 
 #include "USBHost/HostDriver/XInput/tuh_xinput/tuh_xinput.h"
+#include "Board/board_api.h"
+#include "Diagnostics/Diagnostics.h"
 #include "USBHost/HostManager.h"
 #include "OGXMini/OGXMini.h"
 #include "Board/ogxm_log.h"
@@ -85,6 +87,26 @@ void tuh_umount_cb(uint8_t daddr) {
 }
 #endif
 
+/* wired controllers in the diagnostics (Diagnostics/Diagnostics.h). bcdDevice (the
+ * controller's firmware version) comes from the device descriptor, read asynchronously. */
+static uint8_t s_diag_desc[18];
+
+static void diag_desc_done(tuh_xfer_t* xfer)
+{
+    if (xfer->result == XFER_RESULT_SUCCESS)
+        diag::usb_set_bcd_device(xfer->daddr, static_cast<uint16_t>(s_diag_desc[12] | (s_diag_desc[13] << 8)));
+}
+
+static void diag_usb_mounted(uint8_t dev_addr, uint16_t vid, uint16_t pid, const char* cls, HostDriverType type)
+{
+    char driver[16];
+    snprintf(driver, sizeof(driver), "%s/%u", cls, static_cast<unsigned>(type));
+    const uint32_t now = board_api::ms_since_boot();
+    diag::usb_mounted(dev_addr, now, vid, pid, 0, static_cast<uint8_t>(tuh_speed_get(dev_addr)), driver);
+    diag::event(now, "wired controller %04x:%04x (%s)", vid, pid, driver);
+    tuh_descriptor_get_device(dev_addr, s_diag_desc, sizeof(s_diag_desc), diag_desc_done, 0);
+}
+
 //HID
 
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_report, uint16_t desc_len) {
@@ -106,6 +128,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 
     if (host_manager.setup_driver(host_type, HostManager::DriverClass::HID,
             dev_addr, instance, desc_report, desc_len)) {
+        diag_usb_mounted(dev_addr, vid, pid, "HID", host_type);
         OGXMini::host_mounted(true);
     }
 }
@@ -113,6 +136,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* desc_re
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
     HostManager& host_manager = HostManager::get_instance();
     host_manager.deinit_driver(HostManager::DriverClass::HID, dev_addr, instance);
+    diag::usb_unmounted(dev_addr);
 
     if (!host_manager.any_mounted()) {
         OGXMini::host_mounted(false);
@@ -120,6 +144,7 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
 }
 
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
+    diag::usb_report(dev_addr, board_api::ms_since_boot());
     HostManager::get_instance().process_report(HostManager::DriverClass::HID, dev_addr, instance, report, len);
 }
 
@@ -153,6 +178,7 @@ void tuh_xinput::mount_cb(uint8_t dev_addr, uint8_t instance, const tuh_xinput::
 #endif
 
     if (host_manager.setup_driver(host_type, HostManager::DriverClass::XINPUT, dev_addr, instance)) {
+        diag_usb_mounted(dev_addr, vid, pid, "XInput", host_type);
         OGXMini::host_mounted(true, host_type);
     }
 }
@@ -161,6 +187,7 @@ void tuh_xinput::unmount_cb(uint8_t dev_addr, uint8_t instance, const tuh_xinput
     (void)interface;
     HostManager& host_manager = HostManager::get_instance();
     host_manager.deinit_driver(HostManager::DriverClass::XINPUT, dev_addr, instance);
+    diag::usb_unmounted(dev_addr);
 
     if (!host_manager.any_mounted()) {
         OGXMini::host_mounted(false);
@@ -168,6 +195,7 @@ void tuh_xinput::unmount_cb(uint8_t dev_addr, uint8_t instance, const tuh_xinput
 }
 
 void tuh_xinput::report_received_cb(uint8_t dev_addr, uint8_t instance, const uint8_t* report, uint16_t len) {
+    diag::usb_report(dev_addr, board_api::ms_since_boot());
     HostManager::get_instance().process_report(HostManager::DriverClass::XINPUT, dev_addr, instance, report, len);
 }
 
