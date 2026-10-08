@@ -333,7 +333,10 @@ public:
 
     void set_profile(const UserProfile& user_profile, DeviceDriverType driver = DeviceDriverType::NONE) 
     {
-        set_profile_mappings(user_profile);
+        /* Web App mode shows the controller's own buttons (the web app lights up each mapping row
+         * for its physical input), so its mapping is the default one; stick and trigger settings
+         * still apply. */
+        set_profile_mappings(driver == DeviceDriverType::WEBAPP ? UserProfile() : user_profile);
         set_profile_settings(user_profile, driver);
     }
 
