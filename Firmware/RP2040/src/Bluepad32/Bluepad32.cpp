@@ -1320,6 +1320,10 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
         if (uni_gp->misc_buttons & MISC_BUTTON_BACK)    gp_in.buttons |= gamepad->MAP_BUTTON_BACK;
         if (uni_gp->misc_buttons & MISC_BUTTON_START)   gp_in.buttons |= gamepad->MAP_BUTTON_START;
         if (uni_gp->misc_buttons & MISC_BUTTON_SYSTEM)  gp_in.buttons |= gamepad->MAP_BUTTON_SYS;
+        /* Capture (Switch pads) is the Misc button; the DS4 / DualSense touchpad press is added
+         * below. (On a DualSense, MISC_BUTTON_CAPTURE is the mute button: left out.) */
+        if ((uni_gp->misc_buttons & MISC_BUTTON_CAPTURE) && device->controller_type != CONTROLLER_TYPE_PS5Controller)
+            gp_in.buttons |= gamepad->MAP_BUTTON_MISC;
     }
     else {
         if (uni_gp->buttons & BUTTON_A) gp_in.buttons |= gamepad->MAP_BUTTON_A;
@@ -1333,6 +1337,10 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
         if (uni_gp->misc_buttons & MISC_BUTTON_BACK)    gp_in.buttons |= gamepad->MAP_BUTTON_BACK;
         if (uni_gp->misc_buttons & MISC_BUTTON_START)   gp_in.buttons |= gamepad->MAP_BUTTON_START;
         if (uni_gp->misc_buttons & MISC_BUTTON_SYSTEM)  gp_in.buttons |= gamepad->MAP_BUTTON_SYS; 
+        /* Capture (Switch pads) is the Misc button; the DS4 / DualSense touchpad press is added
+         * below. (On a DualSense, MISC_BUTTON_CAPTURE is the mute button: left out.) */
+        if ((uni_gp->misc_buttons & MISC_BUTTON_CAPTURE) && device->controller_type != CONTROLLER_TYPE_PS5Controller)
+            gp_in.buttons |= gamepad->MAP_BUTTON_MISC;
     }
 
     // Check for disconnect combo: Start+Select for most controllers, L3+R3 for OUYA (no Start/Select)
@@ -1479,6 +1487,8 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
         std::memcpy(gp_in.touch_raw, touch_points, sizeof(gp_in.touch_raw));
         gp_in.touchpad_click = touchpad_click ? 1 : 0;
         gp_in.touchpad_valid = 1;
+        if (touchpad_click)  // the touchpad press is the Misc button, mappable like the others
+            gp_in.buttons |= gamepad->MAP_BUTTON_MISC;
     }
 
     if (SteamActive::is_enabled()) {
