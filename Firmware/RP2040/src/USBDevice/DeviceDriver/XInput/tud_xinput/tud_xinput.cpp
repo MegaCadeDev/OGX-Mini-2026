@@ -1,3 +1,4 @@
+#include "Diagnostics/Diagnostics.h"
 #include "tusb_option.h"
 #if (TUSB_OPT_DEVICE_ENABLED && CFG_TUD_XINPUT)
 
@@ -137,6 +138,8 @@ static bool xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint3
     (void)xferred_bytes;
     if (ep_addr == endpoint_out_)
         usbd_edpt_xfer(rhport, endpoint_out_, ep_out_buffer_, ENDPOINT_SIZE);
+    else if ((ep_addr & 0x80) && result == XFER_RESULT_SUCCESS)
+        diag::usb_report_sent();  // the host read a report (diagnostics)
     return true;
 }
 
