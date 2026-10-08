@@ -341,31 +341,35 @@ static bool ogxm_is_handheld_wiimote(const uni_hid_device_t* device)
 //This solves a function pointer/crash issue with bluepad32
 void set_rumble(uni_hid_device_t* bp_device, uint16_t length, uint8_t rumble_l, uint8_t rumble_r)
 {
+    /* The host's left motor (rumble_l) is the strong / low-frequency one and the right motor
+     * (rumble_r) the weak one, while Bluepad32's *_play_dual_rumble() take (weak, strong). */
+    const uint8_t weak = rumble_r;
+    const uint8_t strong = rumble_l;
     switch (bp_device->controller_type)
     {
         case CONTROLLER_TYPE_XBoxOneController:
-            uni_hid_parser_xboxone_play_dual_rumble(bp_device, 0, length + 10, rumble_l, rumble_r);
+            uni_hid_parser_xboxone_play_dual_rumble(bp_device, 0, length + 10, weak, strong);
             break;
         case CONTROLLER_TYPE_AndroidController:
             if (bp_device->vendor_id == UNI_HID_PARSER_STADIA_VID && bp_device->product_id == UNI_HID_PARSER_STADIA_PID) 
             {
-                uni_hid_parser_stadia_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+                uni_hid_parser_stadia_play_dual_rumble(bp_device, 0, length, weak, strong);
             }
             break;
         case CONTROLLER_TYPE_PSMoveController:
-            uni_hid_parser_psmove_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_psmove_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_PS3Controller:
-            uni_hid_parser_ds3_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_ds3_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_PS4Controller:
-            uni_hid_parser_ds4_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_ds4_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_PS5Controller:
-            uni_hid_parser_ds5_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_ds5_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_WiiController:
-            uni_hid_parser_wii_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_wii_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_SwitchProController:
         case CONTROLLER_TYPE_SwitchJoyConRight:
@@ -373,15 +377,15 @@ void set_rumble(uni_hid_device_t* bp_device, uint16_t length, uint8_t rumble_l, 
             /* Outlive the feedback period so a long rumble isn't stopped and restarted on
              * every cycle (see Bluepad32/RumbleRefresh.h). */
             (void)length;
-            uni_hid_parser_switch_play_dual_rumble(bp_device, 0, switch_rumble::kRumbleDurationMs, rumble_l, rumble_r);
+            uni_hid_parser_switch_play_dual_rumble(bp_device, 0, switch_rumble::kRumbleDurationMs, weak, strong);
             break;
         case CONTROLLER_TYPE_Switch2ProController:
         case CONTROLLER_TYPE_Switch2JoyConRight:
         case CONTROLLER_TYPE_Switch2JoyConLeft:
-            uni_hid_parser_switch2_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_switch2_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_SteamControllerTriton:
-            uni_hid_parser_steam_triton_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_steam_triton_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         default:
             break;
