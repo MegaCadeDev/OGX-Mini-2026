@@ -180,6 +180,28 @@ Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 
 ---
 
+## Switch pads — rumble intensity
+
+**Goal:** A Joy-Con / Switch Pro driven by this dongle should vibrate at the strength the host actually requested, and a single Joy-Con should rumble for either motor.
+
+**Problem:** Bluepad32's Switch parser (`switch_play_dual_rumble_now`) passed the requested 0-255 magnitude as a **frequency** argument to `switch_encode_rumble` and used a fixed amplitude (500), so intensity barely changed and the controller instead played different pitches. Weak also only went to the left actuator and strong to the right one, which a fixed amplitude on both sides hid.
+
+**Approach:** Do what SDL does (`SDL_hidapi_switch.c`, `HIDAPI_DriverSwitch_ActuallyRumbleJoystick`): the same 4 bytes on both actuators, the weak magnitude setting the high-band amplitude and the strong one the low-band amplitude, both bands at ~150 Hz, the magnitude mapped onto the full amplitude table (`rumble_amps`, the dekuNukem table, same codes as SDL's). A single Joy-Con has one actuator, so it now rumbles for either magnitude.
+
+**Files:** `Firmware/external/patches/bluepad32_switch_rumble_intensity.diff` (applied to `src/components/bluepad32/parser/uni_hid_parser_switch.c`).
+
+## Bluetooth — output queue (stuck Switch rumble)
+
+**Goal:** A rumble "stop" sent to a Switch pad must always arrive, so the pad never keeps vibrating.
+
+**Problem:** Bluepad32 queues output reports it cannot send right away in a 32-slot queue and drops new ones when it is full. On a busy or weak link a burst of rumble updates filled it, the queued "stop" was dropped and the pad kept vibrating. The earlier workaround re-sent a neutral rumble packet every second while idle (`Bluepad32/RumbleRefresh`).
+
+**Approach:** Backport of Bluepad32's byte-stream output queue (ricardoquesada/bluepad32 b6531db): a 4 KB ring buffer holding about 270 rumble packets instead of 31. The idle refresh is removed; the 350 ms Switch rumble duration stays (`Bluepad32/RumbleTiming.h`).
+
+**Files:** `Firmware/external/patches/bluepad32_output_ring_buffer.diff` (applied to `uni_circular_buffer.c/.h` and `uni_hid_device.c`), `Firmware/cmake/patch_libs.cmake`.
+
+---
+
 ## Switch 2 Pro — anti-deadzone and L3/R3
 
 **Goal:** Fix WebApp **anti-deadzone** drift and **L3/R3** mapping on wired **Switch 2 Pro** ([#64](https://github.com/MegaCadeDev/OGX-Mini-2026/issues/64)).
