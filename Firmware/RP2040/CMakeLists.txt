@@ -15,7 +15,11 @@ set(PICOSDK_VERSION_TAG "2.1.0")
 
 # Default Pico SDK path when not set (e.g. by CMake Tools or command line)
 if(NOT PICO_SDK_PATH)
-    set(PICO_SDK_PATH ${EXTERNAL_DIR}/pico-sdk CACHE PATH "Path to Pico SDK")
+    if(DEFINED ENV{PICO_SDK_PATH})
+        set(PICO_SDK_PATH $ENV{PICO_SDK_PATH} CACHE PATH "Path to Pico SDK")
+    else()
+        set(PICO_SDK_PATH ${EXTERNAL_DIR}/pico-sdk CACHE PATH "Path to Pico SDK")
+    endif()
 endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/../cmake/init_submodules.cmake)
