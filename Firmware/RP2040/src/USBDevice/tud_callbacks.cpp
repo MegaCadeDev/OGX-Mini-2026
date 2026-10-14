@@ -5,6 +5,8 @@
 #include "class/hid/hid_device.h"
 #include "device/usbd_pvt.h"
 
+#include "Board/board_api.h"
+#include "Diagnostics/Diagnostics.h"
 #include "USBDevice/DeviceManager.h"
 #include "USBDevice/DeviceDriver/DeviceDriverTypes.h"
 
@@ -67,11 +69,37 @@ uint8_t const* tud_descriptor_device_qualifier_cb()
 	return DeviceManager::get_instance().get_driver()->get_descriptor_device_qualifier_cb();
 }
 
-#if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
-void tud_resume_cb(void) {
-	bluepad32::on_usb_device_resume();
+/* USB bus events in the diagnostics log (Diagnostics/Diagnostics.h). */
+void tud_mount_cb(void) {
+	diag::usb_output_state(board_api::ms_since_boot(), true, false);
+	diag::event(board_api::ms_since_boot(), "USB configured by the host");
 }
+
+void tud_umount_cb(void) {
+	diag::usb_output_state(board_api::ms_since_boot(), false, false);
+	diag::event(board_api::ms_since_boot(), "USB unconfigured");
+}
+
+void tud_suspend_cb(bool remote_wakeup_en) {
+	diag::usb_output_state(board_api::ms_since_boot(), tud_mounted(), true);
+	diag::event(board_api::ms_since_boot(), "USB suspended (host allows wakeup: %s)", remote_wakeup_en ? "yes" : "no");
+}
+
+/* a report the host read (HID output modes), for the diagnostics' output rate. */
+void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_t len) {
+	(void)instance;
+	(void)report;
+	(void)len;
+	diag::usb_report_sent();
+}
+
+void tud_resume_cb(void) {
+	diag::usb_output_state(board_api::ms_since_boot(), tud_mounted(), false);
+	diag::event(board_api::ms_since_boot(), "USB resumed");
+#if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
+	bluepad32::on_usb_device_resume();
 #endif
+}
 
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
 {

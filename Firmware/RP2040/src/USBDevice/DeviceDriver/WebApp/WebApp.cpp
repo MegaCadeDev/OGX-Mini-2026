@@ -3,6 +3,7 @@
 #include "pico/time.h"
 
 #include "Board/ogxm_log.h"
+#include "Diagnostics/Diagnostics.h"
 #include "Descriptors/CDCDev.h"
 #include "Gamepad/I2CWirePad.h"
 #include "USBDevice/DeviceDriver/WebApp/WebApp.h"
@@ -231,6 +232,37 @@ bool WebAppDevice::write_dongle_settings()
     return write_packet(packet_in);
 }
 
+/* Diagnostics report as JSON text, split over packets (up to 255 chunks). */
+bool WebAppDevice::write_diagnostics()
+{
+    /* Up to 255 chunks; the RP2350 keeps more events (Diagnostics/Diagnostics.h kEvents). */
+#if defined(PICO_RP2350)
+    static char report[255 * 55];
+#else
+    static char report[12 * 1024];
+#endif
+    const size_t len = diag::report_json(report, sizeof(report), to_ms_since_boot(get_absolute_time()));
+    Packet packet_in;
+    const size_t chunk = packet_in.data.size();
+    const size_t total = (len + chunk - 1) / chunk;
+    if (total == 0 || total > 255)
+        return false;
+    packet_in.header.packet_id = PacketID::GET_DIAGNOSTICS;
+    packet_in.header.max_gamepads = MAX_GAMEPADS;
+    packet_in.header.chunks_total = static_cast<uint8_t>(total);
+    for (size_t i = 0; i < total; ++i)
+    {
+        const size_t offset = i * chunk;
+        const size_t n = std::min(chunk, len - offset);
+        packet_in.header.chunk_idx = static_cast<uint8_t>(i);
+        packet_in.header.chunk_len = static_cast<uint8_t>(n);
+        std::memcpy(packet_in.data.data(), report + offset, n);
+        if (!write_packet(packet_in))
+            return false;
+    }
+    return true;
+}
+
 void WebAppDevice::write_error()
 {
     Packet packet_in;
@@ -241,6 +273,7 @@ void WebAppDevice::write_error()
 
 void WebAppDevice::process(const uint8_t idx, Gamepad& gamepad) 
 {
+    diag::tick(to_ms_since_boot(get_absolute_time()));  // rates for boards without Bluetooth too
     /* End a rumble test once its time is up. */
     if (rumble_test_until_ms_ != 0 &&
         static_cast<int32_t>(to_ms_since_boot(get_absolute_time()) - rumble_test_until_ms_) >= 0)
@@ -335,6 +368,14 @@ void WebAppDevice::process(const uint8_t idx, Gamepad& gamepad)
                 user_settings_.store_dongle_settings(settings);  // reboots
                 break;
             }
+
+            case PacketID::GET_DIAGNOSTICS:
+                if (!write_diagnostics())
+                {
+                    write_error();
+                    return;
+                }
+                break;
 
             case PacketID::SET_GP_OUT:
             {

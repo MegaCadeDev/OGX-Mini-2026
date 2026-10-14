@@ -195,6 +195,10 @@ function(apply_lib_patches EXTERNAL_DIR)
     ogxm_apply_patch_series("Bluepad32 output queue" "${BLUEPAD32_PATH}"
         "${EXTERNAL_DIR}/patches/bluepad32_output_ring_buffer.diff")
 
+    # Diagnostics hooks: raw input reports and BLE Device Information values (Diagnostics/).
+    ogxm_apply_patch_series("Bluepad32 diagnostics hooks" "${BLUEPAD32_PATH}"
+        "${EXTERNAL_DIR}/patches/bluepad32_diagnostics_hooks.diff")
+
     # Pico SDK 2.1.x still lists BTstack's old hids_client.c; Bluepad32's BTstack
     # v1.8 renamed it to hids_host.c. Patch the SDK cmake when using that tree.
     set(PICO_SDK_HIDS_PATCH "${EXTERNAL_DIR}/patches/pico_sdk_hids_host.diff")

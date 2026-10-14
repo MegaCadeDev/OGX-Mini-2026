@@ -34,6 +34,9 @@ private:
         /* Adapter options (UserSettings/DongleSettings, 8 bytes). */
         GET_DONGLE_SETTINGS = 0x70,
         SET_DONGLE_SETTINGS = 0x71,
+        /* Diagnostics report (Diagnostics/Diagnostics.h): JSON text over as many chunks as needed.
+         * (0x72 / 0x73 are left for a mouse + keyboard mapping.) */
+        GET_DIAGNOSTICS = 0x74,
         SET_GP_IN = 0x80,
         /* Rumble test from the web app. Data: left (strong) motor 0-255, right (weak) motor
          * 0-255, duration in ms (uint16, little-endian). Answered with an empty SET_GP_OUT. */
@@ -94,6 +97,7 @@ private:
     bool write_gamepad(uint8_t index, const Gamepad::PadIn& pad_in);
     void write_error();
     bool write_dongle_settings();
+    bool write_diagnostics();
 };
 
 #endif // _WEBAAPP_DEVICE_H_

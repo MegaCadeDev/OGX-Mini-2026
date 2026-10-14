@@ -5,6 +5,7 @@
 #include "OGXMini/Board/ESP32_Blueretro_I2C.h"
 #include "OGXMini/Board/ESP32_Bluepad32_I2C.h"
 #include "OGXMini/OGXMini.h"
+#include "Diagnostics/DiagnosticsBoard.h"
 
 namespace OGXMini {
     typedef void (*InitFunc)();
@@ -97,6 +98,7 @@ namespace OGXMini {
         if (init_func[OGXM_BOARD] != nullptr) {
             init_func[OGXM_BOARD]();
         }
+        diag::board_boot();  // diagnostics for the web app's log report
     }
 
     void run() {
