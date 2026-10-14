@@ -6,13 +6,17 @@
 
 /*  Diagnostics: what a user can send without a serial adapter.
  *
- *  Kept in RAM (no flash writes). For each Bluetooth controller: what it is (name,
+ *  Kept in RAM (no flash writes while playing). For each Bluetooth controller: what it is (name,
  *  IDs, address prefix, BLE Device Information strings), its link (Classic or LE, LE interval /
  *  latency / timeout, link mode) and its input
  *  timing (reports per second, typical interval, late reports, largest gap, reports lost by the
  *  controller's own counter). The same timing for wired USB controllers, the USB output side, and
  *  a ring of recent events. The web app asks for it in Web App mode (GET_DIAGNOSTICS) and saves
  *  a report.
+ *
+ *  Measurements of the mode actually used for playing would be lost by the reboot into Web App
+ *  mode, so a short summary of the session is kept in RAM across reboots and, at the moments
+ *  described with session_freeze() below, in flash.
  *
  *  Producers run on both cores; every access takes one critical section.
  */
@@ -33,6 +37,9 @@ namespace diag {
     constexpr size_t kNameLength = 32;
     constexpr size_t kInfoText = 24;
     constexpr uint32_t kGapWindowMs = 5000;  // windows for gaps / late reports: last 5-10 s
+    constexpr size_t kSessionBytes = 240;  // one flash entry (NVSTool value size)
+    constexpr size_t kSessionEvents = 4;   // last events kept with the session summary
+    constexpr size_t kCrashBytes = 96;
 
     struct BoardInfo {
         const char* firmware_version;
@@ -45,7 +52,30 @@ namespace diag {
         uint8_t max_gamepads;
     };
 
+    /* Kept across a reboot that keeps the RAM (mode change, settings saved, watchdog, crash; not
+     * a power-on): the events ring goes on from the previous boot, each event tagged with its boot
+     * (0 = this one, -1 = the one before...), and a crash record. Nothing is written to flash for
+     * this. */
     void init(const BoardInfo& info);
+
+    // ---- Crashes (Diagnostics/CrashHandler.cpp: hard fault, panic) ----
+    struct CrashInfo {
+        uint8_t kind;          // 1 = hard fault, 2 = panic
+        uint8_t core;
+        uint8_t has_fault_regs;  // RP2350 (Cortex-M33) only
+        uint8_t reserved;
+        uint32_t pc, lr, xpsr;
+        uint32_t cfsr, hfsr, mmfar, bfar;
+        uint32_t uptime_ms;
+        char message[48];      // panic message
+    };
+    // From the fault / panic handler, before the reboot: no lock, no allocation.
+    void crash_record(const CrashInfo& crash);
+    // At boot: a crash recorded during the previous boot, as bytes for flash (kCrashBytes); the
+    // caller stores it if it differs from the stored one. 0 when there is none.
+    size_t new_crash(uint8_t* out, size_t out_len);
+    // At boot, when there is no new one: the crash stored in flash, for the report.
+    void set_stored_crash(const uint8_t* data, size_t len);
 
     // Recent events ring (oldest dropped). printf-style, truncated to kEventText.
     void event(uint32_t now_ms, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -82,9 +112,32 @@ namespace diag {
     // ---- USB output (to the console / PC) ----
     void usb_output_state(uint32_t now_ms, bool configured, bool suspended);
     void usb_report_sent();
+    /* Input-to-use latency of the output driver (Gamepad::latency_stats()), for the session
+     * summary. The board registers where to read it; it is read when the session ends, outside
+     * the diagnostics lock (it takes the gamepad's mutex). */
+    struct Latency { uint32_t samples, avg_us, max_us; };
+    using LatencySource = Latency (*)();
+    void set_latency_source(LatencySource source);
 
     // Once a second or more often: rates and windows roll over.
     void tick(uint32_t now_ms);
+
+    // ---- Session summary kept across the mode-change reboot ----
+    /* Sessions (a summary of a mode's use: rates, losses, last events). A session is kept when it
+     * is relevant (not Web App mode; a controller was in it or it lasted 30 s or more).
+     *  - session_freeze(): when the session ends (a mode change, the last controller going
+     *    away), before the pads are turned off. The latest relevant session is kept in RAM
+     *    across reboots ("previous_session", no flash write) until a newer one replaces it.
+     *  - take_replaced_session(): the RAM session that the new one just replaced, if it was not
+     *    stored yet; the caller writes it to flash (a mode change).
+     *  - session_capture(): the frozen session (0 if not relevant); the caller writes it to
+     *    flash when the last controller disconnected, then mark_session_stored().
+     *  - set_stored_session(): the one in flash, at boot ("stored_session"). */
+    void session_freeze(uint32_t now_ms);
+    size_t session_capture(uint8_t* out, size_t out_len, uint32_t now_ms);
+    size_t take_replaced_session(uint8_t* out, size_t out_len);
+    void mark_session_stored();
+    void set_stored_session(const uint8_t* data, size_t len);
 
     // JSON report. Returns the length written (always NUL-terminated, truncated if needed).
     size_t report_json(char* out, size_t out_len, uint32_t now_ms);

@@ -20,6 +20,7 @@
 #include "USBDevice/DeviceDriver/N64/N64.h"
 #include "USBHost/GPIOHost/GPIOHost.h"
 #include "UserSettings/UserSettings.h"
+#include "Diagnostics/DiagnosticsBoard.h"
 #include "Board/Config.h"
 #include "Board/board_api.h"
 #include "Board/board_api_private/board_api_private.h"
@@ -453,6 +454,7 @@ void set_gp_check_timer(uint32_t task_id) {
 }
 
 void pico_w::initialize() {
+    diag::set_latency_gamepad(&_gamepads[0]);  // input-to-use latency in the diagnostics
     OGXM_LOG("PicoW init: start\n");
     board_api::init_board();
     OGXM_LOG("PicoW init: board inited\n");
@@ -588,6 +590,9 @@ void pico_w::run() {
         TaskQueue::Core0::process_tasks();
         if (!wii_mode) {
             tud_task();
+            /* The last controller disconnected: store the diagnostics session summary, reboot. */
+            if (bluepad32::take_store_session_and_reboot())
+                UserSettings::get_instance().store_diag_session_and_reboot();
             HostInputSource input_src = UserSettings::get_instance().get_input_source();
             if (input_src == HostInputSource::PSX_GPIO) {
                 GPIOHost::psx_host_poll(_gamepads[0]);

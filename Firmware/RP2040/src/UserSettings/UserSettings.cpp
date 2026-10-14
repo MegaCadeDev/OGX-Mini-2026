@@ -9,6 +9,8 @@
 #include "Board/ogxm_log.h"
 #include "Board/board_api.h"
 #include "UserSettings/UserSettings.h"
+#include "Diagnostics/Diagnostics.h"
+#include "Diagnostics/DiagnosticsBoard.h"
 
 /* Flash key of the adapter options (UserSettings/DongleSettings). */
 static const std::string DONGLE_SETTINGS_KEY = "dongle_cfg";
@@ -286,8 +288,11 @@ bool UserSettings::store_profile_and_driver_type(DeviceDriverType new_driver_typ
         new_driver_type = DEFAULT_DRIVER();
     }
 
+    diag::event(board_api::ms_since_boot(), "mode change to %s", diag::driver_name(new_driver_type));
+    diag::session_freeze(board_api::ms_since_boot());  // before the pads go away
     board_api::usb::disconnect_all();
 
+    keep_diag_session();
     nvs_tool_.write(DRIVER_TYPE_KEY(), reinterpret_cast<const uint8_t*>(&new_driver_type), sizeof(new_driver_type));
     nvs_tool_.write(ACTIVE_PROFILE_KEY(index), &profile.id, sizeof(uint8_t));
     nvs_tool_.write(PROFILE_KEY(profile.id), &profile, sizeof(UserProfile));
@@ -307,9 +312,12 @@ void UserSettings::store_driver_type(DeviceDriverType new_driver)
     }
 
     OGXM_LOG("Storing new driver type: " + OGXM_TO_STRING(new_driver) + "\n");
+    diag::event(board_api::ms_since_boot(), "mode change to %s", diag::driver_name(new_driver));
+    diag::session_freeze(board_api::ms_since_boot());  // before the pads go away
 
     board_api::usb::disconnect_all();
 
+    keep_diag_session();
     nvs_tool_.write(DRIVER_TYPE_KEY(), &new_driver, sizeof(uint8_t));
 
     board_api::reboot();
@@ -325,7 +333,9 @@ void UserSettings::store_driver_type_and_reboot(DeviceDriverType new_driver)
     }
 
     OGXM_LOG("Storing new driver type and rebooting: " + OGXM_TO_STRING(new_driver) + "\n");
+    diag::event(board_api::ms_since_boot(), "mode change to %s", diag::driver_name(new_driver));
 
+    keep_diag_session();
     nvs_tool_.write(DRIVER_TYPE_KEY(), &new_driver, sizeof(uint8_t));
 
     board_api::reboot();
@@ -604,8 +614,58 @@ void UserSettings::load_dongle_settings()
 
 bool UserSettings::store_dongle_settings(const dongle_settings::Settings& settings)
 {
+    diag::event(board_api::ms_since_boot(), "adapter options saved");
     board_api::usb::disconnect_all();
     nvs_tool_.write(DONGLE_SETTINGS_KEY, &settings, sizeof(settings));
     board_api::reboot();
     return true;
+}
+
+/* Diagnostics session summaries (Diagnostics/Diagnostics.h). A mode change keeps the new session
+ * in RAM and writes only the one it replaces, if that one was not stored yet; the last controller
+ * going away (turned off, the disconnect combo) writes the current one, so it survives unplugging
+ * the adapter. One flash entry; Web App and short, controller-less sessions are never kept. */
+static const std::string DIAG_SESSION_KEY = "diag_session";
+
+void UserSettings::keep_diag_session()
+{
+    diag::session_freeze(board_api::ms_since_boot());
+    uint8_t blob[diag::kSessionBytes]{};
+    if (diag::take_replaced_session(blob, sizeof(blob)))
+        nvs_tool_.write(DIAG_SESSION_KEY, blob, sizeof(blob));
+}
+
+void UserSettings::store_diag_session_and_reboot()
+{
+    uint8_t blob[diag::kSessionBytes]{};
+    if (diag::session_capture(blob, sizeof(blob), board_api::ms_since_boot())) {
+        nvs_tool_.write(DIAG_SESSION_KEY, blob, sizeof(blob));
+        diag::mark_session_stored();
+    }
+    board_api::reboot();
+}
+
+void UserSettings::load_diag_session()
+{
+    uint8_t blob[diag::kSessionBytes]{};
+    if (nvs_tool_.read(DIAG_SESSION_KEY, blob, sizeof(blob)))
+        diag::set_stored_session(blob, sizeof(blob));
+
+    /* A crash during the previous boot is stored once, so it is still in the report after a
+     * power cycle; the same crash again (a crash loop) is not written again. */
+    static const std::string DIAG_CRASH_KEY = "diag_crash";
+    uint8_t crash[diag::kCrashBytes]{};
+    uint8_t stored[diag::kCrashBytes]{};
+    const bool have_stored = nvs_tool_.read(DIAG_CRASH_KEY, stored, sizeof(stored));
+    const size_t n = diag::new_crash(crash, sizeof(crash));
+    if (n) {
+        diag::CrashInfo a{}, b{};
+        std::memcpy(&a, crash, sizeof(a));
+        std::memcpy(&b, stored, sizeof(b));
+        a.uptime_ms = b.uptime_ms = 0;  // the same crash at another moment is the same crash
+        if (!have_stored || std::memcmp(&a, &b, sizeof(a)) != 0)
+            nvs_tool_.write(DIAG_CRASH_KEY, crash, sizeof(crash));
+    } else if (have_stored) {
+        diag::set_stored_crash(stored, sizeof(stored));
+    }
 }

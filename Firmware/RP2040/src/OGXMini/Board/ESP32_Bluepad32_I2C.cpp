@@ -13,6 +13,7 @@
 
 #include "USBDevice/DeviceManager.h"
 #include "UserSettings/UserSettings.h"
+#include "Diagnostics/DiagnosticsBoard.h"
 #include "Board/board_api.h"
 #include "Board/esp32_api.h"
 #include "Gamepad/Gamepad.h"
@@ -151,6 +152,7 @@ bool update_needed(UserSettings& user_settings) {
 }
 
 void esp32_bp32_i2c::initialize() {
+    diag::set_latency_gamepad(&_gamepads[0]);  // input-to-use latency in the diagnostics
     board_api::init_board();
     esp32_api::init();
 

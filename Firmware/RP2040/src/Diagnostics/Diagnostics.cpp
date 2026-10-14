@@ -14,6 +14,7 @@ constexpr size_t kHistBins = 102;  // 1 ms bins 0..100, then "more"
 
 struct Event {
     uint32_t ms;
+    uint8_t boot;  // low byte of the boot count when it was logged
     char text[kEventText];
 };
 
@@ -110,12 +111,75 @@ struct UsbDevice {
     Timing timing;
 };
 
+#pragma pack(push, 1)
+struct SessionCtrl {
+    uint16_t vid, pid;
+    uint8_t le;
+    uint16_t interval;
+    uint16_t reports_per_s;
+    uint16_t late_pct_x10;
+    uint16_t lost_pct_x10;  // 0xFFFF unknown
+    uint16_t max_gap_ms;
+    uint8_t mode;              // 0xFF unknown
+    uint16_t sniff_interval;
+};
+struct Session {
+    uint8_t version;
+    char mode[11];
+    uint32_t uptime_s;
+    uint32_t usb_reports_sent;
+    uint32_t usb_configured_s;
+    uint32_t latency_samples, latency_avg_us, latency_max_us;
+    uint8_t controllers;
+    uint8_t wired;
+    SessionCtrl ctrl[2];
+    uint16_t wired_vid, wired_pid, wired_reports_per_s, wired_max_gap_ms;
+    // The last events of the session (kept in the same flash entry, no extra write).
+    struct { uint32_t ms; char text[32]; } events[kSessionEvents];
+};
+#pragma pack(pop)
+static_assert(sizeof(Session) <= kSessionBytes, "session summary fits its flash entry");
+constexpr uint8_t kSessionVersion = 1;
+
 critical_section_t s_lock;
 bool s_lock_ready = false;
 BoardInfo s_info{};
-Event s_events[kEvents];
-uint32_t s_event_next = 0;
-uint32_t s_event_count = 0;
+/* Kept across reboots that keep the RAM (see init()). On the device it sits in the SDK's
+ * .uninitialized_data section, which the C runtime never clears. */
+#if defined(PICO_ON_DEVICE) && PICO_ON_DEVICE
+#define DIAG_PERSISTENT __attribute__((section(".uninitialized_data")))
+#else
+#define DIAG_PERSISTENT
+#endif
+constexpr uint32_t kPersistMagic = 0x4F474443;  // "OGDC"
+constexpr uint32_t kCrashMagic = 0x43525348;    // "CRSH"
+constexpr uint32_t kSessionMagic = 0x53455353;  // "SESS"
+struct Persist {
+    uint32_t magic;
+    uint32_t boot;
+    uint32_t next, count;
+    uint32_t check;
+    uint32_t crash_magic;
+    CrashInfo crash;
+    uint32_t session_magic;
+    uint32_t session_stored;  // already written to flash
+    Session session;  // the latest relevant session, kept until a newer one replaces it
+    Event events[kEvents];
+};
+DIAG_PERSISTENT Persist s_p;
+Event* const s_events = s_p.events;
+uint32_t& s_event_next = s_p.next;
+uint32_t& s_event_count = s_p.count;
+
+uint32_t persist_check()
+{
+    return s_p.magic ^ s_p.boot ^ (s_p.next << 8) ^ (s_p.count << 16) ^ 0x5A5A5A5Au;
+}
+
+// Last crash for the report: from the boot before (recorded in RAM) or stored in flash.
+CrashInfo s_last_crash{};
+bool s_last_crash_valid = false;
+bool s_last_crash_previous_boot = false;
 Slot s_slots[kSlots];
 Link s_pending[kSlots];
 UsbDevice s_usb[kUsbDevices];
@@ -130,7 +194,20 @@ uint32_t s_second_start = 0;
 uint32_t s_window_start = 0;
 // USB output
 bool s_usb_configured = false, s_usb_suspended = false;
+uint32_t s_usb_configured_since = 0, s_usb_configured_ms = 0;
 uint32_t s_usb_sent = 0, s_usb_sent_rate = 0, s_usb_sent_count = 0;
+LatencySource s_latency_source = nullptr;
+/* Sessions for the report: [0] the latest relevant one, kept in RAM across reboots; [1] the one
+ * stored in flash. */
+Session s_sessions[2]{};
+bool s_sessions_valid[2]{};
+bool s_ram_session_stored = false;  // [0] is already in flash
+// The RAM session a newer one replaced at this reboot, still to be stored in flash.
+Session s_replaced{};
+bool s_replaced_pending = false;
+// The session that just ended (frozen before the pads go away); one per boot.
+Session s_frozen{};
+bool s_frozen_valid = false;
 
 struct Lock {
     Lock() { if (s_lock_ready) critical_section_enter_blocking(&s_lock); }
@@ -254,6 +331,41 @@ void write_link(Writer& w, const Link& l, bool le)
 
 void init(const BoardInfo& info)
 {
+    /* The ring and the crash record survive a reboot that keeps the RAM; after a power-on (or
+     * anything that left them inconsistent) they start empty. */
+    const bool kept = s_p.magic == kPersistMagic && s_p.next < kEvents && s_p.count <= kEvents &&
+                      s_p.check == persist_check();
+    if (kept) {
+        ++s_p.boot;
+    } else {
+        std::memset(&s_p, 0, sizeof(s_p));
+        s_p.magic = kPersistMagic;
+    }
+    s_p.check = persist_check();
+    s_last_crash = CrashInfo{};
+    s_last_crash_valid = s_last_crash_previous_boot = false;
+    for (bool& v : s_sessions_valid) v = false;
+    s_replaced_pending = false;
+    s_frozen_valid = false;
+    if (kept && s_p.session_magic == kSessionMagic && s_p.session.version == kSessionVersion) {
+        s_sessions[0] = s_p.session;  // stays in RAM until a newer relevant session replaces it
+        s_sessions_valid[0] = true;
+        s_ram_session_stored = s_p.session_stored != 0;
+    } else {
+        s_p.session_magic = 0;
+        s_ram_session_stored = false;
+    }
+    if (kept && s_p.crash_magic == kCrashMagic) {
+        s_last_crash = s_p.crash;
+        s_last_crash_valid = true;
+        s_last_crash_previous_boot = true;
+    }
+    s_p.crash_magic = 0;
+
+    BoardInfo board = info;
+    if (s_last_crash_valid && s_last_crash_previous_boot)
+        board.reset_reason = "crash (see last_crash)";  // the crash handler reboots by watchdog
+
     if (!s_lock_ready) {
         /* A shared ("striped") spin lock, as the SDK's mutexes use: the claimable ones (24-31)
          * are taken by TaskQueue and TinyUSB, and claiming one more panics. */
@@ -261,7 +373,7 @@ void init(const BoardInfo& info)
         s_lock_ready = true;
     }
     Lock l;
-    s_info = info;
+    s_info = board;
 }
 
 void event(uint32_t now_ms, const char* fmt, ...)
@@ -274,9 +386,40 @@ void event(uint32_t now_ms, const char* fmt, ...)
     Lock l;
     Event& e = s_events[s_event_next];
     e.ms = now_ms;
+    e.boot = static_cast<uint8_t>(s_p.boot);
     std::memcpy(e.text, text, sizeof(text));
     s_event_next = (s_event_next + 1) % kEvents;
     if (s_event_count < kEvents) ++s_event_count;
+    s_p.check = persist_check();
+}
+
+void crash_record(const CrashInfo& crash)
+{
+    s_p.crash = crash;
+    s_p.crash_magic = kCrashMagic;
+}
+
+size_t new_crash(uint8_t* out, size_t out_len)
+{
+    static_assert(sizeof(CrashInfo) <= kCrashBytes, "crash record fits its flash entry");
+    if (!out || out_len < sizeof(CrashInfo) || !s_last_crash_valid || !s_last_crash_previous_boot)
+        return 0;
+    std::memset(out, 0, out_len);
+    std::memcpy(out, &s_last_crash, sizeof(CrashInfo));
+    return sizeof(CrashInfo);
+}
+
+void set_stored_crash(const uint8_t* data, size_t len)
+{
+    if (!data || len < sizeof(CrashInfo) || s_last_crash_valid)
+        return;
+    CrashInfo c;
+    std::memcpy(&c, data, sizeof(c));
+    if (c.kind != 1 && c.kind != 2)
+        return;
+    s_last_crash = c;
+    s_last_crash_valid = true;
+    s_last_crash_previous_boot = false;
 }
 
 void slot_connected(size_t slot, uint32_t now_ms, const char* name, uint16_t vid, uint16_t pid,
@@ -461,8 +604,9 @@ void usb_report(uint8_t address, uint32_t now_ms)
 
 void usb_output_state(uint32_t now_ms, bool configured, bool suspended)
 {
-    (void)now_ms;
     Lock l;
+    if (configured && !s_usb_configured) s_usb_configured_since = now_ms;
+    if (!configured && s_usb_configured) s_usb_configured_ms += now_ms - s_usb_configured_since;
     s_usb_configured = configured;
     s_usb_suspended = suspended;
 }
@@ -492,6 +636,189 @@ void tick(uint32_t now_ms)
         s_window_start = now_ms;
     }
 }
+
+namespace {
+
+bool web_app_session();
+
+/* Worth keeping: not a Web App session, and a controller was in it or it lasted 30 s or more (a
+ * mode passed through on the way to another one is not). */
+bool session_relevant(const Session& ss)
+{
+    return !web_app_session() && (ss.controllers > 0 || ss.wired || ss.uptime_s >= 30);
+}
+
+bool web_app_session()
+{
+    return s_info.output_mode && std::strcmp(s_info.output_mode, "WEBAPP") == 0;
+}
+
+Session build_session(uint32_t now_ms, const Latency& latency);
+bool session_relevant(const Session& ss);
+
+Latency read_latency()
+{
+    return s_latency_source ? s_latency_source() : Latency{};
+}
+} // namespace
+
+void set_latency_source(LatencySource source)
+{
+    s_latency_source = source;
+}
+
+void session_freeze(uint32_t now_ms)
+{
+    const Latency latency = read_latency();  // before the lock: it takes the gamepad's mutex
+    Lock l;
+    if (s_frozen_valid) return;
+    s_frozen = build_session(now_ms, latency);
+    s_frozen_valid = true;
+    if (!session_relevant(s_frozen))
+        return;  // the RAM keeps the latest relevant session
+    if (s_sessions_valid[0] && !s_ram_session_stored) {
+        s_replaced = s_sessions[0];  // to flash: take_replaced_session()
+        s_replaced_pending = true;
+    }
+    s_p.session = s_frozen;  // kept across the reboot in RAM
+    s_p.session_magic = kSessionMagic;
+    s_p.session_stored = 0;
+}
+
+size_t session_capture(uint8_t* out, size_t out_len, uint32_t now_ms)
+{
+    if (!out || out_len < sizeof(Session)) return 0;
+    const Latency latency = read_latency();
+    Lock l;
+    const Session ss = s_frozen_valid ? s_frozen : build_session(now_ms, latency);
+    if (!session_relevant(ss)) return 0;
+    std::memcpy(out, &ss, sizeof(ss));
+    return sizeof(ss);
+}
+
+namespace {
+Session build_session(uint32_t now_ms, const Latency& latency)
+{
+    Session ss{};
+    ss.version = kSessionVersion;
+    copy_text(ss.mode, sizeof(ss.mode), s_info.output_mode);
+    ss.uptime_s = now_ms / 1000;
+    ss.usb_reports_sent = s_usb_sent;
+    uint32_t configured_ms = s_usb_configured_ms;
+    if (s_usb_configured) configured_ms += now_ms - s_usb_configured_since;
+    ss.usb_configured_s = configured_ms / 1000;
+    ss.latency_samples = latency.samples;
+    ss.latency_avg_us = latency.avg_us;
+    ss.latency_max_us = latency.max_us;
+    for (const auto& s : s_slots) {
+        if (!s.active || ss.controllers >= 2) continue;
+        SessionCtrl& c = ss.ctrl[ss.controllers++];
+        c.vid = s.vid;
+        c.pid = s.pid;
+        c.le = s.le;
+        c.interval = s.link.interval;
+        const uint32_t secs = (now_ms - s.connected_ms) / 1000;
+        c.reports_per_s = static_cast<uint16_t>(secs ? s.timing.reports / secs : s.timing.rate_hz);
+        uint32_t median = 0, late = 0;
+        s.timing.lateness(median, late);
+        c.late_pct_x10 = static_cast<uint16_t>(late);
+        bool usable = false;
+        const uint32_t lost = counter_lost_x10(s, usable);
+        c.lost_pct_x10 = usable ? static_cast<uint16_t>(lost) : 0xFFFF;
+        c.max_gap_ms = static_cast<uint16_t>(s.timing.gap_max > 0xFFFF ? 0xFFFF : s.timing.gap_max);
+        c.mode = s.link.mode_known ? s.link.mode : 0xFF;
+        c.sniff_interval = s.link.sniff_interval;
+    }
+    for (const auto& u : s_usb) {
+        if (!u.active || ss.wired) continue;
+        ss.wired = 1;
+        ss.wired_vid = u.vid;
+        ss.wired_pid = u.pid;
+        const uint32_t secs = (now_ms - u.connected_ms) / 1000;
+        ss.wired_reports_per_s = static_cast<uint16_t>(secs ? u.timing.reports / secs : u.timing.rate_hz);
+        ss.wired_max_gap_ms = static_cast<uint16_t>(u.timing.gap_max > 0xFFFF ? 0xFFFF : u.timing.gap_max);
+    }
+    const size_t n = s_event_count < kSessionEvents ? s_event_count : kSessionEvents;
+    for (size_t i = 0; i < n; ++i) {
+        const Event& e = s_events[(s_event_next + kEvents - n + i) % kEvents];
+        ss.events[i].ms = e.ms;
+        copy_text(ss.events[i].text, sizeof(ss.events[i].text), e.text);
+    }
+    return ss;
+}
+} // namespace
+
+void set_stored_session(const uint8_t* data, size_t len)
+{
+    Lock l;
+    const bool ok = data && len >= sizeof(Session) && data[0] == kSessionVersion;
+    s_sessions_valid[1] = ok;
+    if (ok) std::memcpy(&s_sessions[1], data, sizeof(Session));
+}
+
+size_t take_replaced_session(uint8_t* out, size_t out_len)
+{
+    Lock l;
+    if (!s_replaced_pending || !out || out_len < sizeof(Session)) return 0;
+    s_replaced_pending = false;
+    std::memcpy(out, &s_replaced, sizeof(Session));
+    return sizeof(Session);
+}
+
+void mark_session_stored()
+{
+    Lock l;
+    s_p.session_stored = 1;
+}
+
+
+namespace {
+void write_session(Writer& w, const Session& p)
+{
+    w.raw("{\"mode\":");
+    w.str(p.mode);
+    w.raw(",\"uptime_s\":%lu,\"usb_configured_s\":%lu,\"usb_reports_sent\":%lu",
+          static_cast<unsigned long>(p.uptime_s), static_cast<unsigned long>(p.usb_configured_s),
+          static_cast<unsigned long>(p.usb_reports_sent));
+    if (p.usb_configured_s)
+        w.raw(",\"usb_reports_sent_per_s\":%lu", static_cast<unsigned long>(p.usb_reports_sent / p.usb_configured_s));
+    w.raw(",\"input_to_output_latency\":{\"samples\":%lu,\"avg_us\":%lu,\"max_us\":%lu},\"controllers\":[",
+          static_cast<unsigned long>(p.latency_samples), static_cast<unsigned long>(p.latency_avg_us),
+          static_cast<unsigned long>(p.latency_max_us));
+    for (uint8_t i = 0; i < p.controllers && i < 2; ++i) {
+        const SessionCtrl& c = p.ctrl[i];
+        w.raw("%s{\"vid\":\"%04x\",\"pid\":\"%04x\",\"link\":\"%s\",\"reports_per_s\":%u", i ? "," : "",
+              c.vid, c.pid, c.le ? "LE" : "Classic", c.reports_per_s);
+        w.pct("late_reports_pct", c.late_pct_x10);
+        if (c.lost_pct_x10 != 0xFFFF) w.pct("lost_reports_pct", c.lost_pct_x10);
+        w.raw(",\"max_gap_ms\":%u", c.max_gap_ms);
+        if (c.le && c.interval) w.ms_1_25("le_interval_ms", c.interval);
+        if (c.mode == 0) w.raw(",\"link_mode\":\"active\"");
+        if (c.mode == 2) {
+            w.raw(",\"link_mode\":\"sniff\"");
+            w.ms_0_625("sniff_interval_ms", c.sniff_interval);
+        }
+        w.raw("}");
+    }
+    w.raw("]");
+    if (p.wired)
+        w.raw(",\"wired\":{\"vid\":\"%04x\",\"pid\":\"%04x\",\"reports_per_s\":%u,\"max_gap_ms\":%u}",
+              p.wired_vid, p.wired_pid, p.wired_reports_per_s, p.wired_max_gap_ms);
+    w.raw(",\"last_events\":[");
+    bool first_ev = true;
+    for (size_t i = 0; i < kSessionEvents; ++i) {
+        if (!p.events[i].text[0]) continue;
+        char text[sizeof(p.events[i].text) + 1]{};
+        std::memcpy(text, p.events[i].text, sizeof(p.events[i].text));
+        w.raw("%s{\"ms\":%lu,\"text\":", first_ev ? "" : ",", static_cast<unsigned long>(p.events[i].ms));
+        w.str(text);
+        w.raw("}");
+        first_ev = false;
+    }
+    w.raw("]}");
+}
+
+} // namespace
 
 size_t report_json(char* out, size_t out_len, uint32_t now_ms)
 {
@@ -568,8 +895,39 @@ size_t report_json(char* out, size_t out_len, uint32_t now_ms)
     }
     w.raw("]");
 
-    /* Events, oldest first. The oldest are left out when the report would not fit (it must stay
-     * valid JSON). */
+    if (s_sessions_valid[0]) {
+        w.raw(",\"previous_session\":");
+        write_session(w, s_sessions[0]);
+    }
+    // The flash copy, unless it is the same session as the one in RAM.
+    if (s_sessions_valid[1] &&
+        !(s_sessions_valid[0] && std::memcmp(&s_sessions[0], &s_sessions[1], sizeof(Session)) == 0)) {
+        w.raw(",\"stored_session\":");
+        write_session(w, s_sessions[1]);
+    }
+
+    if (s_last_crash_valid) {
+        const CrashInfo& k = s_last_crash;
+        w.raw(",\"last_crash\":{\"when\":\"%s\",\"kind\":\"%s\",\"core\":%u,\"uptime_ms\":%lu",
+              s_last_crash_previous_boot ? "previous boot" : "stored (an earlier boot)",
+              k.kind == 2 ? "panic" : "hard fault", k.core, static_cast<unsigned long>(k.uptime_ms));
+        if (k.kind == 1)
+            w.raw(",\"pc\":\"0x%08lx\",\"lr\":\"0x%08lx\",\"xpsr\":\"0x%08lx\"", static_cast<unsigned long>(k.pc),
+                  static_cast<unsigned long>(k.lr), static_cast<unsigned long>(k.xpsr));
+        if (k.has_fault_regs)
+            w.raw(",\"cfsr\":\"0x%08lx\",\"hfsr\":\"0x%08lx\",\"mmfar\":\"0x%08lx\",\"bfar\":\"0x%08lx\"",
+                  static_cast<unsigned long>(k.cfsr), static_cast<unsigned long>(k.hfsr),
+                  static_cast<unsigned long>(k.mmfar), static_cast<unsigned long>(k.bfar));
+        if (k.message[0]) {
+            char msg[sizeof(k.message) + 1]{};
+            std::memcpy(msg, k.message, sizeof(k.message));
+            w.key_str("message", msg);
+        }
+        w.raw("}");
+    }
+
+    /* Events, oldest first; this boot's and the ones before a reboot that kept the RAM. The
+     * oldest are left out when the report would not fit (it must stay valid JSON). */
     w.raw(",\"events\":[");
     size_t shown = 0, budget = w.cap > w.len + 64 ? w.cap - w.len - 64 : 0;
     while (shown < s_event_count) {
@@ -581,7 +939,10 @@ size_t report_json(char* out, size_t out_len, uint32_t now_ms)
     }
     for (size_t n = 0; n < shown; ++n) {
         const Event& e = s_events[(s_event_next + kEvents - shown + n) % kEvents];
-        w.raw("%s{\"ms\":%lu,\"text\":", n ? "," : "", static_cast<unsigned long>(e.ms));
+        const int boot = static_cast<int>(static_cast<int8_t>(static_cast<uint8_t>(e.boot - static_cast<uint8_t>(s_p.boot))));
+        w.raw("%s{\"ms\":%lu", n ? "," : "", static_cast<unsigned long>(e.ms));
+        if (boot) w.raw(",\"boot\":%d", boot);
+        w.raw(",\"text\":");
         w.str(e.text);
         w.raw("}");
     }
@@ -609,7 +970,9 @@ void reset_for_tests()
 {
     Lock l;
     s_info = BoardInfo{};
-    s_event_next = s_event_count = 0;
+    std::memset(&s_p, 0, sizeof(s_p));
+    s_last_crash = CrashInfo{};
+    s_last_crash_valid = s_last_crash_previous_boot = false;
     for (auto& s : s_slots) s = Slot{};
     for (auto& p : s_pending) p = Link{};
     for (auto& u : s_usb) u = UsbDevice{};
@@ -620,7 +983,16 @@ void reset_for_tests()
     s_adv_count = s_adv_rate = 0;
     s_second_start = s_window_start = 0;
     s_usb_configured = s_usb_suspended = false;
+    s_usb_configured_since = s_usb_configured_ms = 0;
     s_usb_sent = s_usb_sent_rate = s_usb_sent_count = 0;
+    for (int k = 0; k < 2; ++k) {
+        s_sessions[k] = Session{};
+        s_sessions_valid[k] = false;
+    }
+    s_ram_session_stored = false;
+    s_replaced_pending = false;
+    s_frozen = Session{};
+    s_frozen_valid = false;
 }
 
 } // namespace diag
