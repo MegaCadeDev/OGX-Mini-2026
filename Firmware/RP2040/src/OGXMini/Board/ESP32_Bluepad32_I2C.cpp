@@ -111,6 +111,10 @@ static inline void slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
 }
 
 static void core1_task() {
+    /* Let Core0 park this core while it writes flash (UserSettings/NVSTool.h). Without it, a
+     * settings write ran with only Core0's interrupts off while this core kept executing from
+     * flash, which could hang it. */
+    multicore_lockout_victim_init();
     i2c_init(I2C_PORT, I2C_BAUDRATE);
 
     gpio_init(I2C_SDA_PIN);

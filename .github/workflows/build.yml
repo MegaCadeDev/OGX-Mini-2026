@@ -18,6 +18,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Rules learnt from bugs that only showed on hardware (.github/scripts/check_firmware_rules.py).
+  rules:
+    name: Firmware rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check firmware rules
+        run: python3 .github/scripts/check_firmware_rules.py
+
   build:
     name: Build ${{ matrix.board }}
     runs-on: ubuntu-latest

@@ -108,6 +108,10 @@ void stop_pio_usb_host() {
 } // namespace board_api_usbh
 
 void core1_task() {
+    /* Let Core0 park this core while it writes flash (UserSettings/NVSTool.h). Without it, a
+     * settings write ran with only Core0's interrupts off while this core kept executing from
+     * flash, which could hang it. */
+    multicore_lockout_victim_init();
     HostManager& host_manager = HostManager::get_instance();
     host_manager.initialize(_gamepads);
 

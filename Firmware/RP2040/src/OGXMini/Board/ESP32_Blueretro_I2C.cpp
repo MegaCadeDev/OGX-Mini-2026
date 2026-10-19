@@ -42,6 +42,10 @@ static Gamepad _gamepads[MAX_GAMEPADS];
 static bool _uart_bridge_mode = false;
 
 static void core1_task() {
+    /* Let Core0 park this core while it writes flash (UserSettings/NVSTool.h). Without it, a
+     * settings write ran with only Core0's interrupts off while this core kept executing from
+     * flash, which could hang it. */
+    multicore_lockout_victim_init();
     i2c_init(I2C_PORT, I2C_BAUDRATE);
 
     gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
