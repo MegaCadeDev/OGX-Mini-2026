@@ -97,6 +97,8 @@ Start = Plus (Switch) = Options (Dualsense/DS4)
 - PlayStation 4 motion (DualShock 4 USB gadget for auth dongles — **not** licensed PS4 console output)
     - Start + Left Bumper + D-pad **Left**
     - Made so **motion controls** work through an **authentication dongle** (e.g. Brook Wingman). This firmware does **not** perform PS4 authentication; plug OGX into a licensed dongle, then the dongle into the PS4.
+- DInput
+    - Start + Right Bumper + Dpad Left
 - SteamOS / Bazzite (DualSense USB + touchpad mouse)
     - Start + Left Bumper + D-pad **Up**
 - PlayStation Classic
@@ -106,7 +108,7 @@ Start = Plus (Switch) = Options (Dualsense/DS4)
 - Dreamcast (GPIO output)
     - Start + Y — **Pico W / Pico 2 W + controller cable**; Bluetooth input only (USB-A host out of scope)
 - Wii U (GameCube Adapter)
-      - Start + Left Bumper + D-Pad Down
+    - Start + Left Bumper + D-Pad Down
 - Web Application Mode
     - Start + Left Bumper + Right Bumper
 
