@@ -37,7 +37,7 @@ Unofficial clones, random AliExpress spin-offs, or homebrew PCBs that only “lo
 2. Open a GitHub issue only after reading **[Support issue requirements](Firmware/RP2040/docs/Support_Issue_Requirements.md)** and including **every** required field. Incomplete reports **may be closed or delayed**.
 3. Out-of-scope **boards:** clone → fix → pull request. Out-of-scope **controllers:** arrange donation or shipment first — otherwise the request will be closed as out of scope.
 
-[**Visit the web app here**](https://megacadedev.github.io/OGX-Mini-2026-WebApp/) to change your mappings and deadzone settings. To pair the OGX-Mini with the web app via USB, plug your controller in, then connect it to your PC, hold **Start + Left Bumper + Right Bumper** to enter web app mode. Click "Connect via USB" in the web app and select the OGX-Mini. You can also pair via Bluetooth, no extra steps are needed in that case. 
+[**Visit the web app here**](https://megacadedev.github.io/OGX-Mini-2026-WebApp/) to change your mappings and deadzone settings. To pair the OGX-Mini with the web app via USB, plug your controller in, then connect it to your PC, hold **Start + Left Bumper + Right Bumper** to enter web app mode. Click "Connect via USB" in the web app and select the OGX-Mini. You can also pair via Bluetooth, no extra steps are needed in that case. The web app also shows each controller's link health and saves a diagnostics report to attach to support issues: see the [Web app guide](Firmware/RP2040/docs/Web_App_Guide.md). 
 
 [**Join the discord here!**](https://discord.gg/HhZuSaSc4)
 
