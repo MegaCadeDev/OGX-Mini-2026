@@ -1877,7 +1877,15 @@ void run_task(Gamepad(&gamepads)[MAX_GAMEPADS])
         uni_bt_enable_new_connections_safe(false);
         OGXM_LOG("BT: applied deferred USB quiet (pad was plugged during BT bring-up)\n");
     }
-    btstack_run_loop_execute();
+    /* Instead of btstack_run_loop_execute(), which sleeps until the async context's hardware
+     * alarm: that wake-up was sometimes lost, the context then never re-armed (alarm_pending
+     * stays set) and BTstack timers only ran on incoming BT traffic. An idle Series pad sends
+     * none, so its 1 s connect rumble ran until a button press. This core only runs BTstack
+     * (in the async context's IRQ), so nudge it every 2 ms. */
+    while (true) {
+        btstack_run_loop_poll_data_sources_from_irq();
+        busy_wait_us(2000);
+    }
 }
 
 } // namespace bluepad32 
