@@ -1,0 +1,12 @@
+diff --git a/src/rp2_common/pico_async_context/async_context_threadsafe_background.c b/src/rp2_common/pico_async_context/async_context_threadsafe_background.c
+index 33f3d45c..9de17b4a 100644
+--- a/src/rp2_common/pico_async_context/async_context_threadsafe_background.c
++++ b/src/rp2_common/pico_async_context/async_context_threadsafe_background.c
+@@ -258,6 +258,7 @@ static void process_under_lock(async_context_threadsafe_background_t *self) {
+             if (self->alarm_id > 0) {
+                 alarm_pool_cancel_alarm(self->alarm_pool, self->alarm_id);
+                 self->alarm_id = 0;
++                self->alarm_pending = false;
+             }
+             break;
+         }

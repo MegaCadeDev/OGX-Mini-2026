@@ -243,4 +243,33 @@ function(apply_lib_patches EXTERNAL_DIR)
         endif ()
     endif ()
 
+
+    # Pico SDK 2.1.0 can leave the async context's alarm unarmed, so BTstack timers only run
+    # when a BT packet wakes the context (#146: an idle Xbox Series pad's connect rumble ran
+    # until a button press). Both fixes are needed:
+    #  - async context: alarm_pending stayed set after cancelling the alarm with no timer left
+    #    (backport of raspberrypi/pico-sdk#2838, SDK 2.3.0);
+    #  - alarm pool: the hardware alarm could stay disarmed when its stale compare value looked
+    #    earlier than the new target (backport of raspberrypi/pico-sdk#2127, #2190, #2382).
+    foreach (PICO_SDK_TIMER_PATCH pico_sdk_async_context_alarm_pending.diff pico_sdk_time_adapter_alarm.diff)
+        set(PICO_SDK_TIMER_PATCH_FILE "${EXTERNAL_DIR}/patches/${PICO_SDK_TIMER_PATCH}")
+        if (EXISTS "${PICO_SDK_PATH_LOCAL}/src/rp2_common/pico_async_context/async_context_threadsafe_background.c")
+            message(STATUS "Applying Pico SDK timer patch: ${PICO_SDK_TIMER_PATCH_FILE}")
+            execute_process(
+                COMMAND git apply --ignore-whitespace ${PICO_SDK_TIMER_PATCH_FILE}
+                WORKING_DIRECTORY ${PICO_SDK_PATH_LOCAL}
+                RESULT_VARIABLE PICO_SDK_TIMER_PATCH_RESULT
+                OUTPUT_VARIABLE PICO_SDK_TIMER_PATCH_OUTPUT
+                ERROR_VARIABLE PICO_SDK_TIMER_PATCH_ERROR
+            )
+            if (PICO_SDK_TIMER_PATCH_RESULT EQUAL 0)
+                message(STATUS "Pico SDK timer patch applied successfully.")
+            elseif (PICO_SDK_TIMER_PATCH_ERROR MATCHES "patch does not apply")
+                message(STATUS "Pico SDK timer patch already applied.")
+            else ()
+                message(FATAL_ERROR "Failed to apply Pico SDK timer patch ${PICO_SDK_TIMER_PATCH}: ${PICO_SDK_TIMER_PATCH_ERROR}")
+            endif ()
+        endif ()
+    endforeach ()
+
 endfunction()
