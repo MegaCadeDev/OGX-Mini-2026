@@ -87,6 +87,10 @@ void DInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_Y)   in_report.buttons[0] |= DInput::Buttons0::TRIANGLE;
         if (gp_in.buttons & Gamepad::BUTTON_LB)  in_report.buttons[0] |= DInput::Buttons0::L1;
         if (gp_in.buttons & Gamepad::BUTTON_RB)  in_report.buttons[0] |= DInput::Buttons0::R1;
+        /* The descriptor's L2 / R2 buttons follow the triggers, as in PS3 mode. Only the pressure
+         * bytes carried them, which hosts do not show: ZL / ZR did nothing on a PC. */
+        if (gp_in.trigger_l) in_report.buttons[0] |= DInput::Buttons0::L2;
+        if (gp_in.trigger_r) in_report.buttons[0] |= DInput::Buttons0::R2;
 
         if (gp_in.buttons & Gamepad::BUTTON_L3)    in_report.buttons[1] |= DInput::Buttons1::L3;
         if (gp_in.buttons & Gamepad::BUTTON_R3)    in_report.buttons[1] |= DInput::Buttons1::R3;
