@@ -1,21 +1,28 @@
 [submodule "Firmware/external/bluepad32"]
 	path = Firmware/external/bluepad32
+    ignore = dirty
 	url = https://github.com/MegaCadeDev/bluepad32.git
 [submodule "Firmware/external/tinyusb"]
 	path = Firmware/external/tinyusb
 	url = https://github.com/MegaCadeDev/tinyusb.git
+    ignore = dirty
 [submodule "Tools/dump-dvd-kit"]
 	path = Tools/dump-dvd-kit
 	url = https://github.com/XboxDev/dump-dvd-kit.git
+    ignore = dirty
 [submodule "Firmware/external/Pico-PIO-USB"]
 	path = Firmware/external/Pico-PIO-USB
 	url = https://github.com/wiredopposite/Pico-PIO-USB.git
+    ignore = dirty
 [submodule "WebApp"]
 	path = WebApp
 	url = https://github.com/wiredopposite/OGX-Mini-WebApp.git
+    ignore = dirty
 [submodule "Firmware/external/libfixmath"]
 	path = Firmware/external/libfixmath
 	url = https://github.com/PetteriAimonen/libfixmath.git
+    ignore = dirty
 [submodule "Firmware/ESP32_Blueretro"]
 	path = Firmware/ESP32_Blueretro
 	url = https://github.com/wiredopposite/BlueRetro.git
+    ignore = dirty
