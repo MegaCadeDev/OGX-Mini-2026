@@ -1,0 +1,45 @@
+diff --git a/src/components/bluepad32/include/parser/uni_hid_parser_switch.h b/src/components/bluepad32/include/parser/uni_hid_parser_switch.h
+index 5035b32..87457cb 100644
+--- a/src/components/bluepad32/include/parser/uni_hid_parser_switch.h
++++ b/src/components/bluepad32/include/parser/uni_hid_parser_switch.h
+@@ -26,6 +26,8 @@ void uni_hid_parser_switch_device_dump(struct uni_hid_device_s* d);
+ void uni_hid_parser_switch_teardown(struct uni_hid_device_s* d);
+ // Unlink the parser's timers before its instance data is wiped (device delete).
+ void uni_hid_parser_switch_cleanup(struct uni_hid_device_s* d);
++// Ask the pad to disconnect itself and sleep (subcommand 0x06 / 0x00).
++void uni_hid_parser_switch_request_sleep(struct uni_hid_device_s* d);
+ bool uni_hid_parser_switch_input_processed_in_parser(const struct uni_hid_device_s* d);
+ bool uni_hid_parser_switch_solo_needs_partner(const struct uni_hid_device_s* d);
+ bool uni_hid_parser_switch_any_awaiting_partner(void);
+diff --git a/src/components/bluepad32/parser/uni_hid_parser_switch.c b/src/components/bluepad32/parser/uni_hid_parser_switch.c
+index 2f1c272..57b8b2e 100644
+--- a/src/components/bluepad32/parser/uni_hid_parser_switch.c
++++ b/src/components/bluepad32/parser/uni_hid_parser_switch.c
+@@ -120,6 +120,7 @@ enum {
+ 
+ enum switch_subcmd {
+     SUBCMD_REQ_DEV_INFO = 0x02,
++    SUBCMD_SET_HCI_STATE = 0x06,
+     SUBCMD_SET_REPORT_MODE = 0x03,
+     SUBCMD_SPI_FLASH_READ = 0x10,
+     SUBCMD_SET_PLAYER_LEDS = 0x30,
+@@ -501,6 +502,19 @@ static void switch_fsm_resend_current_step(uni_hid_device_t* d) {
+     switch_setup_arm_step_timer(d);
+ }
+ 
++// Ask the pad to drop the link itself and go to sleep (subcommand 0x06, arg 0x00), like the
++// console does when it turns controllers off. The pad reconnects on its next button press.
++void uni_hid_parser_switch_request_sleep(struct uni_hid_device_s* d) {
++    if (!d || d->report_parser.setup != uni_hid_parser_switch_setup)
++        return;
++    uint8_t out[sizeof(struct switch_subcmd_request) + 1] = {0};
++    struct switch_subcmd_request* req = (struct switch_subcmd_request*)&out[0];
++    req->report_id = OUTPUT_RUMBLE_AND_SUBCMD;
++    req->subcmd_id = SUBCMD_SET_HCI_STATE;
++    req->data[0] = 0x00;  // disconnect, enter sleep mode
++    send_subcmd(d, req, sizeof(out));
++}
++
+ void uni_hid_parser_switch_cleanup(struct uni_hid_device_s* d) {
+     if (!d || d->report_parser.setup != uni_hid_parser_switch_setup)
+         return;

@@ -47,6 +47,10 @@ set(SOURCES_BOARD
     ${SRC}/OGXMini/Board/ESP32_Bluepad32_I2C.cpp
     ${SRC}/OGXMini/Board/ESP32_Blueretro_I2C.cpp
 
+    ${SRC}/Diagnostics/Diagnostics.cpp
+    ${SRC}/Diagnostics/DiagnosticsBoard.cpp
+    ${SRC}/Diagnostics/CrashHandler.cpp
+
     ${SRC}/TaskQueue/TaskQueue.cpp
 
     ${SRC}/Input/InputSlot.cpp
@@ -60,6 +64,7 @@ set(SOURCES_BOARD
     ${SRC}/Board/board_api_private/board_api_usbh.cpp
     
     ${SRC}/UserSettings/UserSettings.cpp
+    ${SRC}/UserSettings/DongleSettings.cpp
     ${SRC}/UserSettings/UserProfile.cpp
     ${SRC}/UserSettings/JoystickSettings.cpp
     ${SRC}/UserSettings/TriggerSettings.cpp
@@ -73,6 +78,8 @@ set(SOURCES_BOARD
     ${SRC}/USBDevice/DeviceDriver/Steam/Steam.cpp
     ${SRC}/USBDevice/DeviceDriver/Steam/SteamTouchpad.cpp
     ${SRC}/USBDevice/DeviceDriver/Switch/Switch.cpp
+    ${SRC}/USBDevice/DeviceDriver/Switch/SwitchImu.cpp
+    ${SRC}/USBDevice/DeviceDriver/Switch/HdRumble.cpp
     ${SRC}/USBDevice/DeviceDriver/WiiU/WiiU.cpp
     ${SRC}/USBDevice/DeviceDriver/Wii/Wii.cpp
     ${SRC}/USBDevice/DeviceDriver/PS1PS2/PS1PS2.cpp
@@ -232,6 +239,12 @@ elseif(OGXM_BOARD STREQUAL "RP2354")
     set(PICO_PLATFORM rp2350)
     set(FLASH_SIZE_MB 4)
 
+elseif(OGXM_BOARD STREQUAL "OGX_LIVE")
+    # nightowl3090/OGX-LIVE: bare RP2040, W25Q128 16MB flash, PIO USB host GP10/11 (USB-A)
+    add_compile_definitions(CONFIG_OGXM_BOARD_OGX_LIVE=1)
+    set(EN_USB_HOST TRUE)
+    set(FLASH_SIZE_MB 16)
+
 else()
     message(FATAL_ERROR "Invalid OGXM_BOARD value. See options in src/Board/Config.h")
 
@@ -302,6 +315,41 @@ endif()
 set(MAIN_LOOP_DELAY_US 0 CACHE STRING "Main loop delay in microseconds; 0 = low latency (default)")
 add_compile_definitions(MAIN_LOOP_DELAY_US=${MAIN_LOOP_DELAY_US})
 
+# Joy-Con motion defaults (adapter options, UserSettings/DongleSettings: users can change them
+# from the web app; these only set the defaults).
+set(OGXM_JOYCON_PAIR_IMU_SIDE "RIGHT" CACHE STRING "Joy-Con half providing motion in a merged pair (RIGHT|LEFT)")
+set(OGXM_JOYCON_PAIR_ORIENTATION "VERTICAL" CACHE STRING "Merged Joy-Con pair orientation (VERTICAL|HORIZONTAL)")
+set(OGXM_JOYCON_SOLO_ORIENTATION "HORIZONTAL" CACHE STRING "Single Joy-Con orientation (VERTICAL|HORIZONTAL)")
+set_property(CACHE OGXM_JOYCON_PAIR_IMU_SIDE PROPERTY STRINGS RIGHT LEFT)
+set_property(CACHE OGXM_JOYCON_PAIR_ORIENTATION PROPERTY STRINGS VERTICAL HORIZONTAL)
+set_property(CACHE OGXM_JOYCON_SOLO_ORIENTATION PROPERTY STRINGS VERTICAL HORIZONTAL)
+foreach(_opt IN ITEMS OGXM_JOYCON_PAIR_IMU_SIDE:RIGHT:LEFT OGXM_JOYCON_PAIR_ORIENTATION:HORIZONTAL:VERTICAL
+                      OGXM_JOYCON_SOLO_ORIENTATION:HORIZONTAL:VERTICAL)
+    string(REPLACE ":" ";" _parts "${_opt}")
+    list(GET _parts 0 _name)
+    list(GET _parts 1 _true_value)
+    list(GET _parts 2 _false_value)
+    if (NOT ${_name} STREQUAL _true_value AND NOT ${_name} STREQUAL _false_value)
+        message(FATAL_ERROR "${_name} must be ${_true_value} or ${_false_value}, got '${${_name}}'")
+    endif()
+endforeach()
+if (OGXM_JOYCON_PAIR_IMU_SIDE STREQUAL "RIGHT")
+    add_compile_definitions(OGXM_JOYCON_PAIR_IMU_RIGHT=1)
+else()
+    add_compile_definitions(OGXM_JOYCON_PAIR_IMU_RIGHT=0)
+endif()
+if (OGXM_JOYCON_PAIR_ORIENTATION STREQUAL "HORIZONTAL")
+    add_compile_definitions(OGXM_JOYCON_PAIR_HORIZONTAL=1)
+else()
+    add_compile_definitions(OGXM_JOYCON_PAIR_HORIZONTAL=0)
+endif()
+if (OGXM_JOYCON_SOLO_ORIENTATION STREQUAL "HORIZONTAL")
+    add_compile_definitions(OGXM_JOYCON_SOLO_HORIZONTAL=1)
+else()
+    add_compile_definitions(OGXM_JOYCON_SOLO_HORIZONTAL=0)
+endif()
+message(STATUS "Joy-Con motion: pair IMU ${OGXM_JOYCON_PAIR_IMU_SIDE}, pair ${OGXM_JOYCON_PAIR_ORIENTATION}, solo ${OGXM_JOYCON_SOLO_ORIENTATION}")
+
 if(EN_USB_HOST)
     message(STATUS "USB host enabled.")
     add_compile_definitions(CONFIG_EN_USB_HOST=1)
@@ -355,6 +403,7 @@ if(EN_BLUETOOTH)
     list(APPEND SOURCES_BOARD
         ${SRC}/Bluepad32/Bluepad32.cpp
         ${SRC}/Bluepad32/ClassicPairingDebug.cpp
+        ${SRC}/Bluepad32/JoyConSettings.cpp
         ${SRC}/BLEServer/BLEServer.cpp
         ${SRC}/USBHost/HostDriver/FlydigiApex4Wukong/FlydigiApex4WukongBtProbe.cpp
         ${SRC}/USBHost/HostDriver/FlydigiApex4Wukong/FlydigiApex4WukongBt.cpp
@@ -448,6 +497,9 @@ string(TIMESTAMP CURRENT_DATETIME "%Y-%m-%d %H:%M:%S")
 add_compile_definitions(BUILD_DATETIME="${CURRENT_DATETIME}")
 add_compile_definitions(FIRMWARE_NAME="${FW_NAME}")
 add_compile_definitions(FIRMWARE_VERSION="${FW_VERSION}")
+add_compile_definitions(OGXM_BOARD_NAME="${OGXM_BOARD}")
+# panic() records the message for the diagnostics and reboots (Diagnostics/CrashHandler.cpp).
+add_compile_definitions(PICO_PANIC_FUNCTION=ogxm_panic)
 add_compile_definitions(PICO_FLASH_SIZE_BYTES=${FLASH_SIZE_MB}*1024*1024)
 add_compile_definitions(NVS_SECTORS=4)
 

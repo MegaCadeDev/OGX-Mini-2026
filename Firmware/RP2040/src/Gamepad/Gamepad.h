@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <pico/mutex.h>
+#include <pico/time.h>
 
 #include "libfixmath/fix16.hpp"
 
@@ -134,12 +135,14 @@ public:
                    motion_source == MOTION_SRC_WII_BT;
         }
 
-        /** DualSense touchpad raw bytes (Steam mode mouse). Wire format: 8 bytes at DS5 touch offset. */
+        /** DS4 / DualSense touchpad raw bytes: 2 touch points x 4 bytes, the same wire format on
+         *  both pads (bit 7 of a point's first byte set = not touching). */
         uint8_t touch_raw[8];
         uint8_t touchpad_click;
-        /** Set when touch_raw was filled from a DS5 report this frame. */
+        /** Set when touch_raw was filled from a DS4 / DS5 report this frame. */
         uint8_t touchpad_valid;
-        uint8_t touchpad_reserved;
+        /** Pad battery, Bluepad32 scale (0 = unknown, 1..255). */
+        uint8_t battery;
 
         PadIn()
         {
@@ -175,7 +178,12 @@ public:
     ~Gamepad() = default;
 
     //Get
-    inline bool new_pad_in() const { return new_pad_in_.load(); }
+    inline bool new_pad_in() const
+	{
+		return new_pad_in_.load(std::memory_order_acquire) ||
+			   (bt_pad_middle_state_.load(std::memory_order_acquire) &
+				BT_PAD_MAILBOX_DIRTY);
+	}
     inline bool new_pad_out() const { return new_pad_out_.load(); }
 
     // True if current pad_out has non-zero rumble (read-only, does not clear new_pad_out).
@@ -193,32 +201,60 @@ public:
     inline PadIn get_pad_in()
     {
         mutex_enter_blocking(&pad_in_mutex_);
-        /* Bluetooth HID runs on Core1; never block there on this mutex (would stall HCI/L2CAP).
-         * Latest BT reports are staged lock-free (2 slots) and merged here on Core0. */
-        while (bt_pad_staged_count_.load(std::memory_order_acquire) > 0) {
-            const unsigned ri = bt_pad_staged_read_.load(std::memory_order_relaxed) % BT_PAD_STAGING_SLOTS;
-            const PadIn& p = bt_pending_pads_[ri];
-            if (pad_in_count_ < PAD_IN_QUEUE_SIZE) {
-                pad_in_queue_[pad_in_tail_] = p;
-                pad_in_tail_ = (pad_in_tail_ + 1) % PAD_IN_QUEUE_SIZE;
-                pad_in_count_++;
-            } else {
-                pad_in_head_ = (pad_in_head_ + 1) % PAD_IN_QUEUE_SIZE;
-                pad_in_queue_[pad_in_tail_] = p;
-                pad_in_tail_ = (pad_in_tail_ + 1) % PAD_IN_QUEUE_SIZE;
-            }
-            bt_pad_staged_read_.store((ri + 1) % BT_PAD_STAGING_SLOTS, std::memory_order_relaxed);
-            bt_pad_staged_count_.fetch_sub(1, std::memory_order_acq_rel);
-            new_pad_in_.store(true);
-        }
+        /* Bluetooth HID runs on Core1; never block there on this mutex.
+		 *
+		 * Triple-buffer handoff:
+		 *   - Core1 exclusively owns bt_pad_write_index_
+		 *   - Core0 exclusively owns bt_pad_read_index_
+		 *   - bt_pad_middle_state_ atomically contains the shared middle
+		 *     buffer index plus a dirty bit
+		 *
+		 * If multiple Bluetooth reports arrive before Core0 consumes them,
+		 * the newest complete PadIn wins.
+		 */
+		const unsigned middle_state =
+			bt_pad_middle_state_.load(std::memory_order_acquire);
+
+		if (middle_state & BT_PAD_MAILBOX_DIRTY) {
+			const unsigned published =
+				bt_pad_middle_state_.exchange(bt_pad_read_index_,
+											  std::memory_order_acq_rel);
+
+			if (published & BT_PAD_MAILBOX_DIRTY) {
+				bt_pad_read_index_ = published & BT_PAD_MAILBOX_INDEX_MASK;
+
+				const PadIn& p = bt_pending_pads_[bt_pad_read_index_];
+
+				if (pad_in_count_ < PAD_IN_QUEUE_SIZE) {
+					pad_in_queue_[pad_in_tail_] = p;
+					pad_in_tail_ = (pad_in_tail_ + 1) % PAD_IN_QUEUE_SIZE;
+					pad_in_count_++;
+				} else {
+					// Queue full: discard oldest so the newest controller state survives.
+					pad_in_head_ = (pad_in_head_ + 1) % PAD_IN_QUEUE_SIZE;
+					pad_in_queue_[pad_in_tail_] = p;
+					pad_in_tail_ = (pad_in_tail_ + 1) % PAD_IN_QUEUE_SIZE;
+				}
+
+				new_pad_in_.store(true, std::memory_order_release);
+			}
+		}
         PadIn pad_in;
         if (pad_in_count_ > 0) {
             pad_in = pad_in_queue_[pad_in_head_];
             pad_in_head_ = (pad_in_head_ + 1) % PAD_IN_QUEUE_SIZE;
             pad_in_count_--;
             last_pad_in_ = pad_in;
-            if (pad_in_count_ == 0)
+            if (pad_in_count_ == 0) {
                 new_pad_in_.store(false);
+                /* Diagnostics: time from the newest input's arrival to its use. */
+                const uint32_t lat = static_cast<uint32_t>(time_us_64()) -
+                                     pad_in_arrival_us_.load(std::memory_order_relaxed);
+                ++latency_count_;
+                latency_sum_us_ += lat;
+                if (lat > latency_max_us_)
+                    latency_max_us_ = lat;
+            }
         } else {
             pad_in = last_pad_in_;
         }
@@ -234,6 +270,45 @@ public:
         mutex_exit(&pad_out_mutex_);
 
         return pad_out;
+    }
+
+    /* Like get_pad_out(), but each motor reports the strongest rumble set since the
+     * previous call. For consumers that poll slower than hosts send (Bluepad32 feedback runs
+     * every 250 ms; Steam's trigger test pulses last ~200 ms), so a short pulse isn't lost. */
+    inline PadOut take_pad_out_peak()
+    {
+        mutex_enter_blocking(&pad_out_mutex_);
+        PadOut pad_out = pad_out_;
+        if (peak_out_.rumble_l > pad_out.rumble_l) pad_out.rumble_l = peak_out_.rumble_l;
+        if (peak_out_.rumble_r > pad_out.rumble_r) pad_out.rumble_r = peak_out_.rumble_r;
+        peak_out_ = pad_out_;
+        new_pad_out_.store(false);
+        mutex_exit(&pad_out_mutex_);
+
+        return pad_out;
+    }
+
+    /* Lightbar colour requested by the host (STEAM mode), kept apart from PadOut so the
+     * PadOut wire layout (I2C boards) doesn't change. */
+    struct Lightbar
+    {
+        uint8_t r{0}, g{0}, b{0};
+        bool valid{false};
+    };
+
+    inline void set_host_lightbar(uint8_t r, uint8_t g, uint8_t b)
+    {
+        mutex_enter_blocking(&pad_out_mutex_);
+        host_lightbar_ = Lightbar{r, g, b, true};
+        mutex_exit(&pad_out_mutex_);
+    }
+
+    inline Lightbar get_host_lightbar()
+    {
+        mutex_enter_blocking(&pad_out_mutex_);
+        Lightbar l = host_lightbar_;
+        mutex_exit(&pad_out_mutex_);
+        return l;
     }
 
     inline ChatpadIn get_chatpad_in()
@@ -267,7 +342,10 @@ public:
 
     void set_profile(const UserProfile& user_profile, DeviceDriverType driver = DeviceDriverType::NONE) 
     {
-        set_profile_mappings(user_profile);
+        /* Web App mode shows the controller's own buttons (the web app lights up each mapping row
+         * for its physical input), so its mapping is the default one; stick and trigger settings
+         * still apply. */
+        set_profile_mappings(driver == DeviceDriverType::WEBAPP ? UserProfile() : user_profile);
         set_profile_settings(user_profile, driver);
     }
 
@@ -285,6 +363,7 @@ public:
             pad_in_tail_ = (pad_in_tail_ + 1) % PAD_IN_QUEUE_SIZE;
         }
         last_pad_in_ = pad_in;
+        pad_in_arrival_us_.store(static_cast<uint32_t>(time_us_64()), std::memory_order_relaxed);
         new_pad_in_.store(true);
         mutex_exit(&pad_in_mutex_);
     }
@@ -301,6 +380,7 @@ public:
         pad_in_tail_ = 1;
         pad_in_count_ = 1;
         last_pad_in_ = pad_in;
+        pad_in_arrival_us_.store(static_cast<uint32_t>(time_us_64()), std::memory_order_relaxed);
         new_pad_in_.store(true);
         mutex_exit(&pad_in_mutex_);
     }
@@ -338,29 +418,37 @@ public:
             pad_in_count_++;
         }
         last_pad_in_ = pad_in;
+        pad_in_arrival_us_.store(static_cast<uint32_t>(time_us_64()), std::memory_order_relaxed);
         new_pad_in_.store(true);
         mutex_exit(&pad_in_mutex_);
     }
 
     /** Bluetooth (Core1): never blocks on Core0 — avoids stalling the BT stack in HID callbacks. */
-    inline void set_pad_in_from_bluetooth(const PadIn& pad_in)
-    {
-        if (bt_pad_staged_count_.load(std::memory_order_acquire) >= BT_PAD_STAGING_SLOTS) {
-            const unsigned drop = bt_pad_staged_read_.load(std::memory_order_relaxed) % BT_PAD_STAGING_SLOTS;
-            bt_pad_staged_read_.store((drop + 1) % BT_PAD_STAGING_SLOTS, std::memory_order_relaxed);
-            bt_pad_staged_count_.fetch_sub(1, std::memory_order_acq_rel);
-        }
-        const unsigned wi = bt_pad_staged_write_.load(std::memory_order_relaxed) % BT_PAD_STAGING_SLOTS;
-        bt_pending_pads_[wi] = pad_in;
-        bt_pad_staged_write_.store((wi + 1) % BT_PAD_STAGING_SLOTS, std::memory_order_release);
-        bt_pad_staged_count_.fetch_add(1, std::memory_order_release);
-        new_pad_in_.store(true, std::memory_order_release);
-    }
+	inline void set_pad_in_from_bluetooth(const PadIn& pad_in)
+	{
+		// Core1 exclusively owns bt_pad_write_index_.
+		bt_pending_pads_[bt_pad_write_index_] = pad_in;
+
+		// Publish this completed buffer together with the dirty state,
+		// and take ownership of the previous middle buffer.
+		const unsigned previous_middle =
+			bt_pad_middle_state_.exchange(
+				bt_pad_write_index_ | BT_PAD_MAILBOX_DIRTY,
+				std::memory_order_acq_rel);
+
+		bt_pad_write_index_ =
+			previous_middle & BT_PAD_MAILBOX_INDEX_MASK;
+
+		pad_in_arrival_us_.store(static_cast<uint32_t>(time_us_64()), std::memory_order_relaxed);
+		new_pad_in_.store(true, std::memory_order_release);
+	}
 
     inline void set_pad_out(const PadOut& pad_out)
     {
         mutex_enter_blocking(&pad_out_mutex_);
         pad_out_ = pad_out;
+        if (pad_out.rumble_l > peak_out_.rumble_l) peak_out_.rumble_l = pad_out.rumble_l;
+        if (pad_out.rumble_r > peak_out_.rumble_r) peak_out_.rumble_r = pad_out.rumble_r;
         new_pad_out_.store(true);
         mutex_exit(&pad_out_mutex_);
     }
@@ -373,14 +461,29 @@ public:
     }
 
     // Wii U GC adapter: set by host when controller uses positive Y for physical up (e.g. Xbox One/360)
+    /* Diagnostics: how long the newest controller input waited before the output driver (or
+     * anything else) read it: samples, average and largest wait in microseconds. */
+    struct LatencyStats {
+        uint32_t samples;
+        uint32_t avg_us;
+        uint32_t max_us;
+    };
+    LatencyStats latency_stats()
+    {
+        mutex_enter_blocking(&pad_in_mutex_);
+        const LatencyStats st{latency_count_,
+                              latency_count_ ? static_cast<uint32_t>(latency_sum_us_ / latency_count_) : 0,
+                              latency_max_us_};
+        mutex_exit(&pad_in_mutex_);
+        return st;
+    }
+
     void set_stick_y_positive_is_up(bool v) { stick_y_positive_is_up_ = v; }
     bool stick_y_positive_is_up() const { return stick_y_positive_is_up_; }
 
     inline void reset_pad_in()
     {
-        bt_pad_staged_write_.store(0, std::memory_order_relaxed);
-        bt_pad_staged_read_.store(0, std::memory_order_relaxed);
-        bt_pad_staged_count_.store(0, std::memory_order_relaxed);
+		bt_pad_middle_state_.fetch_and(BT_PAD_MAILBOX_INDEX_MASK, std::memory_order_acq_rel);
         mutex_enter_blocking(&pad_in_mutex_);
         pad_in_head_ = 0;
         pad_in_tail_ = 0;
@@ -394,6 +497,8 @@ public:
     {
         mutex_enter_blocking(&pad_out_mutex_);
         pad_out_ = PadOut();
+        peak_out_ = PadOut();
+        host_lightbar_ = Lightbar();
         new_pad_out_.store(true);
         mutex_exit(&pad_out_mutex_);
     }
@@ -500,18 +605,27 @@ public:
     }
 
     static constexpr unsigned PAD_IN_QUEUE_SIZE = 8;
-    static constexpr unsigned BT_PAD_STAGING_SLOTS = 2;
+	static constexpr unsigned BT_PAD_MAILBOX_SLOTS = 3;
+	static constexpr unsigned BT_PAD_MAILBOX_DIRTY = 1u << 2;
+	static constexpr unsigned BT_PAD_MAILBOX_INDEX_MASK = BT_PAD_MAILBOX_DIRTY - 1u;
 
 private:
-    PadIn bt_pending_pads_[BT_PAD_STAGING_SLOTS]{};
-    std::atomic<unsigned> bt_pad_staged_write_{0};
-    std::atomic<unsigned> bt_pad_staged_read_{0};
-    std::atomic<unsigned> bt_pad_staged_count_{0};
+    PadIn bt_pending_pads_[BT_PAD_MAILBOX_SLOTS]{};
+
+	// Triple-buffer ownership starts as:
+	//   Core1 write buffer = 0
+	//   shared middle     = 1
+	//   Core0 read buffer = 2
+	unsigned bt_pad_write_index_{0};                 // Core1 only
+	std::atomic<unsigned> bt_pad_middle_state_{1};   // middle index + dirty bit
+	unsigned bt_pad_read_index_{2};                  // Core0 only
     mutex_t pad_in_mutex_;
     mutex_t pad_out_mutex_;
     mutex_t chatpad_in_mutex_;
 
     PadOut pad_out_;
+    PadOut peak_out_;  // strongest rumble since the last take_pad_out_peak()
+    Lightbar host_lightbar_;
     PadIn pad_in_queue_[PAD_IN_QUEUE_SIZE];
     unsigned pad_in_head_{0};
     unsigned pad_in_tail_{0};
@@ -520,6 +634,11 @@ private:
     ChatpadIn chatpad_in_{0};
 
     std::atomic<bool> new_pad_in_{false};
+    /* Diagnostics, input-to-use latency (see latency_stats()). */
+    std::atomic<uint32_t> pad_in_arrival_us_{0};
+    uint32_t latency_count_{0};
+    uint64_t latency_sum_us_{0};
+    uint32_t latency_max_us_{0};
     std::atomic<bool> new_pad_out_{false};
 
     std::atomic<bool> analog_enabled_{false};

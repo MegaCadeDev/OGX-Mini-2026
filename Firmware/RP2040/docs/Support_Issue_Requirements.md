@@ -15,6 +15,7 @@ Also read the [Support policy](../../../README.md#support-policy) in the main RE
 | Wired pad lists | [Wired_Controllers.md](Wired_Controllers.md) |
 | Flydigi APEX 4 Wukong (modes / limitations) | [Flydigi_APEX4_Wukong.md](Flydigi_APEX4_Wukong.md) |
 | Full HID report capture (required for mapping) | On-device **Debug UART** — see [Adding supported controllers](Adding_Supported_Controllers.md#step-2--capture-reports-on-the-adapter-required-for-driver-mapping) |
+| Diagnostics log report (lag, disconnects, freezes) | Web app **Diagnostics → Generate log report** — see [Web_App_Guide.md](Web_App_Guide.md#how-to-generate-a-report) |
 
 ---
 
@@ -125,6 +126,7 @@ Provide what applies; more evidence = faster triage.
 
 | Evidence | When |
 |----------|------|
+| **Diagnostics log report** from the web app ([how](Web_App_Guide.md#how-to-generate-a-report)) | Lag / stutter, disconnects, pairing, the adapter freezing or restarting — no serial adapter needed |
 | Photo of the board (and USB host wiring if PIO USB / Feather) | Wiring / “not detecting” |
 | UART log from a **Debug** build | Mount failures, disconnects, BT pairing |
 | Video (short) of the failure | Timing / disconnect / LED behavior hard to describe |
@@ -144,6 +146,7 @@ If the pad is wireless on Pico W / Pico 2 W / RP2354:
 - LED behavior on the pad and on the board  
 - Distance / 2.4 GHz interference notes if relevant  
 - Whether the same pad works **wired** into the adapter’s USB host  
+- The web app **diagnostics log report**, generated right after the problem ([how](Web_App_Guide.md#how-to-generate-a-report))  
 - Debug UART lines around connect / disconnect (`[BP32 …]`, `BT:`, `SW2:`, etc.)
 
 ---
@@ -203,6 +206,7 @@ Always / intermittent (describe):
 
 
 ### Attachments
+- [ ] Diagnostics log report from the web app (Diagnostics → Generate log report), if lag / disconnects / freezes
 - [ ] **Debug UART full report hex from the adapter** (if mapping / new pad / wrong buttons) — **not** PC `Tools/controller_capture/` script output
 - [ ] UART log (if connect / disconnect / init)
 - [ ] Photos / video (optional)

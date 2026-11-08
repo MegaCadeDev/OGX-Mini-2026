@@ -13,7 +13,8 @@
 #define RP2350_ZERO         9
 #define RP2040_XIAO         10
 #define RP2354              11
-#define BOARDS_COUNT        12
+#define OGX_LIVE            12
+#define BOARDS_COUNT        13
 
 #define SYSCLOCK_KHZ 240000
 
@@ -136,6 +137,12 @@
     #define PIO_USB_SWAP_DP_DM  0
     #endif
     #define LED_INDICATOR_PIN   25
+
+#elif defined(CONFIG_OGXM_BOARD_OGX_LIVE)
+    /* nightowl3090/OGX-LIVE: bare RP2040 + W25Q128 (16MB), USB-A host on GP10/11.
+     * FE1.1S hub / STM32 communicator are outside this UF2. */
+    #define OGXM_BOARD          OGX_LIVE
+    #define PIO_USB_DP_PIN      10 // DM = 11 (USB-A host for controllers)
 
 #else
     #error "Invalid OGXMini board selected"

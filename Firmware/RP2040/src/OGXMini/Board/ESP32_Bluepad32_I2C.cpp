@@ -13,6 +13,7 @@
 
 #include "USBDevice/DeviceManager.h"
 #include "UserSettings/UserSettings.h"
+#include "Diagnostics/DiagnosticsBoard.h"
 #include "Board/board_api.h"
 #include "Board/esp32_api.h"
 #include "Gamepad/Gamepad.h"
@@ -110,6 +111,10 @@ static inline void slave_handler(i2c_inst_t *i2c, i2c_slave_event_t event) {
 }
 
 static void core1_task() {
+    /* Let Core0 park this core while it writes flash (UserSettings/NVSTool.h). Without it, a
+     * settings write ran with only Core0's interrupts off while this core kept executing from
+     * flash, which could hang it. */
+    multicore_lockout_victim_init();
     i2c_init(I2C_PORT, I2C_BAUDRATE);
 
     gpio_init(I2C_SDA_PIN);
@@ -151,6 +156,7 @@ bool update_needed(UserSettings& user_settings) {
 }
 
 void esp32_bp32_i2c::initialize() {
+    diag::set_latency_gamepad(&_gamepads[0]);  // input-to-use latency in the diagnostics
     board_api::init_board();
     esp32_api::init();
 

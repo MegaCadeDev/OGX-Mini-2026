@@ -20,6 +20,7 @@
 #include "USBDevice/DeviceDriver/N64/N64.h"
 #include "USBHost/GPIOHost/GPIOHost.h"
 #include "UserSettings/UserSettings.h"
+#include "Diagnostics/DiagnosticsBoard.h"
 #include "Board/Config.h"
 #include "Board/board_api.h"
 #include "Board/board_api_private/board_api_private.h"
@@ -37,7 +38,7 @@
 #include <pico/flash.h>
 #include "Wii/WiiReportConverter.h"
 
-/** Called from flash_safe_execute on Core1; only write flash. Reboot is done by caller after return. */
+/** Called on Core1; only writes flash (NVSTool handles flash safety). Reboot is done by the caller. */
 static void store_driver_type_callback(void* arg) {
     auto d = *static_cast<DeviceDriverType*>(arg);
     UserSettings::get_instance().store_driver_type_only(d);
@@ -153,6 +154,10 @@ void stop_pio_usb_host() {
     s_usb_line_debounce_armed = false;
     s_usb_unplug_debounce_armed = false;
     enable_host_line_irq_monitoring();
+}
+
+bool sof_timer_active() {
+    return s_pico_w_usb_sof_hw_timer;
 }
 
 } // namespace board_api_usbh
@@ -407,13 +412,12 @@ void core1_task_wii_usb_host() {
             if (changed) {
                 static DeviceDriverType new_driver;
                 new_driver = user_settings.get_current_driver();
-                OGXM_LOG("WII Core1: driver change detected, new_driver=" + OGXM_TO_STRING(new_driver) + ", calling flash_safe_execute\n");
-                int fs_ret = flash_safe_execute(store_driver_type_callback, &new_driver, 200);
-                OGXM_LOG("WII Core1: flash_safe_execute returned " + std::to_string(fs_ret) + " (0=ok)\n");
-                if (fs_ret == 0) {
-                    OGXM_LOG("WII Core1: calling reboot\n");
-                    board_api::reboot();
-                }
+                OGXM_LOG("WII Core1: driver change detected, new_driver=" + OGXM_TO_STRING(new_driver) + "\n");
+                /* NVSTool parks the other core itself (flash_safe_execute); wrapping the
+                 * write in another flash_safe_execute would nest the lockout and fail. */
+                store_driver_type_callback(&new_driver);
+                OGXM_LOG("WII Core1: calling reboot\n");
+                board_api::reboot();
             }
         }
 #endif
@@ -423,6 +427,10 @@ void core1_task_wii_usb_host() {
 
 void core1_task() {
     OGXM_LOG("PicoW Core1: entry\n");
+    /* Let Core0 park this core safely (multicore_lockout) before a mode switch
+     * writes flash, instead of force-resetting it while it may hold a shared lock. Done here,
+     * before BTstack runs, not from a BT timer. */
+    multicore_lockout_victim_init();
     board_api::init_bluetooth();
     OGXM_LOG("PicoW Core1: init_bluetooth done\n");
     board_api::set_led(true);
@@ -450,6 +458,7 @@ void set_gp_check_timer(uint32_t task_id) {
 }
 
 void pico_w::initialize() {
+    diag::set_latency_gamepad(&_gamepads[0]);  // input-to-use latency in the diagnostics
     OGXM_LOG("PicoW init: start\n");
     board_api::init_board();
     OGXM_LOG("PicoW init: board inited\n");
@@ -585,6 +594,9 @@ void pico_w::run() {
         TaskQueue::Core0::process_tasks();
         if (!wii_mode) {
             tud_task();
+            /* The last controller disconnected: store the diagnostics session summary, reboot. */
+            if (bluepad32::take_store_session_and_reboot())
+                UserSettings::get_instance().store_diag_session_and_reboot();
             HostInputSource input_src = UserSettings::get_instance().get_input_source();
             if (input_src == HostInputSource::PSX_GPIO) {
                 GPIOHost::psx_host_poll(_gamepads[0]);

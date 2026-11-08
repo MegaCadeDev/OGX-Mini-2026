@@ -1,87 +1,230 @@
-name: Build OGX-Mini
+name: Build and Release
+
+# Builds Release UF2s for supported boards on every push/PR, and publishes
+# GitHub Releases with those UF2s when pushing to master or develop.
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [master, develop]
   pull_request:
-    branches: [ "main" ]
+    branches: [master, develop]
   workflow_dispatch:
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+permissions:
+  contents: write
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Rules learnt from bugs that only showed on hardware (.github/scripts/check_firmware_rules.py).
+  rules:
+    name: Firmware rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check firmware rules
+        run: python3 .github/scripts/check_firmware_rules.py
+
+  build:
+    name: Build ${{ matrix.board }}
+    runs-on: ubuntu-latest
+    # Each step below retries on its own (up to 5 attempts, each with a time limit), so a
+    # hung download or build is retried instead of losing that board's UF2. A normal run
+    # takes 3-5 minutes; this only bounds the worst case.
+    timeout-minutes: 90
     strategy:
+      fail-fast: false
       matrix:
         board:
+          # Maintainer-supported / commonly flashed boards
           - PI_PICO
           - PI_PICO2
           - PI_PICOW
           - PI_PICO2W
           - RP2040_ZERO
+          - RP2350_ZERO
+          - RP2350_USB_A
+          - RP2040_XIAO
+          - RP2354
+          - OGX_LIVE
           - ADAFRUIT_FEATHER
+          - EXTERNAL_4CH_I2C
           - ESP32_BLUEPAD32_I2C
           - ESP32_BLUERETRO_I2C
-          #- EXTERNAL_4CH_I2C
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        run: sudo apt install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
-
-      - name: Get Pico SDK
-        run: git clone --branch 2.1.0 --recurse-submodules https://github.com/raspberrypi/pico-sdk.git
-
-      - name: Create Build and Output Folders
-        run: mkdir -p build output
-
-      - name: Build OGX-Mini - ${{ matrix.board }}
+      - name: Checkout submodules
         run: |
-          cd build
-          rm -rf ./*
-          cmake -DPICO_SDK_PATH=${{ github.workspace }}/pico-sdk \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DOGXM_BOARD=${{ matrix.board }} \
-                -DMAX_GAMEPADS=1 \
-                ../Firmware/RP2040
-          cmake --build .
+          .github/scripts/retry.sh 5 10m -- \
+            git submodule update --init --recursive --depth 1
 
-          # Move the generated .uf2 file to output/ without knowing the exact version
-          FILE=$(find . -maxdepth 1 -name "OGX-Mini-*-${{ matrix.board }}*.uf2" | head -n 1)
-          cp "$FILE" ../output/
+      # apt-get install is the step seen hanging (10+ min) on runners. Each attempt: apt's own
+      # network retries/timeouts, finish any install a killed attempt left half-configured, then
+      # install. A normal install takes 1-2 minutes.
+      # The toolchain is ~590 MB of packages; a slow Ubuntu mirror took longer than the install
+      # attempts allowed (e.g. EXTERNAL_4CH_I2C / OGX_LIVE on #130). Keep the downloaded .deb
+      # files in the Actions cache so later runs install without downloading them again.
+      - name: Cache toolchain packages
+        uses: actions/cache@v4
+        timeout-minutes: 8
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
+        with:
+          path: ~/apt-archives
+          key: apt-${{ runner.os }}-arm-none-eabi-v1
 
-      - name: Upload UF2 Artifact
+      # Each attempt may take up to 15 minutes; apt resumes a partial download on the next one.
+      - name: Install toolchain
+        env:
+          APT_OPTS: >-
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+            -o DPkg::Lock::Timeout=120
+        run: |
+          mkdir -p "$HOME/apt-archives/partial"
+          export APT_OPTS="$APT_OPTS -o Dir::Cache::Archives=$HOME/apt-archives"
+          .github/scripts/retry.sh 5 5m -- bash -c 'sudo apt-get $APT_OPTS update'
+          .github/scripts/retry.sh 5 15m -- bash -c '
+            sudo dpkg --configure -a &&
+            sudo apt-get $APT_OPTS install -y \
+              cmake ninja-build \
+              gcc-arm-none-eabi \
+              libnewlib-arm-none-eabi \
+              libstdc++-arm-none-eabi-newlib'
+          # Let the cache step save the archives (apt leaves them owned by root).
+          sudo chown -R "$(id -u):$(id -g)" "$HOME/apt-archives"
+
+      # A slow cache download gives up after a few minutes and the SDK is cloned instead.
+      - name: Cache Pico SDK
+        id: cache-pico-sdk
+        uses: actions/cache@v4
+        timeout-minutes: 8
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
+        with:
+          path: Firmware/external/pico-sdk
+          key: pico-sdk-2.1.0
+
+      - name: Get Pico SDK 2.1.0
+        if: steps.cache-pico-sdk.outputs.cache-hit != 'true'
+        run: |
+          SDK="${{ github.workspace }}/Firmware/external/pico-sdk"
+          .github/scripts/retry.sh 5 10m -- bash -c "
+            rm -rf '$SDK' &&
+            git clone --branch 2.1.0 --depth 1 --recurse-submodules \
+              https://github.com/raspberrypi/pico-sdk.git '$SDK'"
+
+      - name: Build ${{ matrix.board }}
+        working-directory: Firmware/RP2040
+        run: |
+          set -euo pipefail
+          BUILD_DIR="${{ github.workspace }}/build-${{ matrix.board }}"
+          OUT_DIR="${{ github.workspace }}/output"
+          mkdir -p "$BUILD_DIR" "$OUT_DIR"
+
+          # Configure (may download tools) and build, retried if an attempt fails or hangs.
+          "${{ github.workspace }}/.github/scripts/retry.sh" 5 15m -- bash -c "
+            cmake -S . -B '$BUILD_DIR' -G Ninja \
+              -DPICO_SDK_PATH='${{ github.workspace }}/Firmware/external/pico-sdk' \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DOGXM_BOARD=${{ matrix.board }} \
+              -DMAX_GAMEPADS=1 &&
+            cmake --build '$BUILD_DIR'"
+
+          UF2=$(find "$BUILD_DIR" -maxdepth 1 -name "OGX-Mini-*-${{ matrix.board }}*.uf2" | head -n 1)
+          if [ -z "$UF2" ]; then
+            echo "No UF2 produced for ${{ matrix.board }}"
+            find "$BUILD_DIR" -maxdepth 2 -name '*.uf2' -print || true
+            exit 1
+          fi
+          cp -v "$UF2" "$OUT_DIR/"
+
+      - name: Upload UF2 artifact
         uses: actions/upload-artifact@v4
         with:
           name: uf2-${{ matrix.board }}
           path: output/*.uf2
+          if-no-files-found: error
 
   release:
+    name: Publish GitHub Release
     needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop')
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download All Artifacts
+      - name: Checkout (for version file)
+        uses: actions/checkout@v4
+
+      - name: Download UF2 artifacts
         uses: actions/download-artifact@v4
         with:
-          path: output
+          path: artifacts
+          merge-multiple: false
 
-      - name: List Files
-        run: ls -lh output/**
+      - name: Collect UF2s and version metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          mkdir -p release-files
+          find artifacts -type f -name '*.uf2' -exec cp -v {} release-files/ \;
+          ls -lh release-files/
 
-      - name: Create Draft Release
-        uses: softprops/action-gh-release@v2.2.2
-        #if: github.ref == 'refs/heads/main'
+          FW_VERSION=$(sed -n 's/^set(FW_VERSION "\(.*\)")/\1/p' Firmware/FWDefines.cmake | head -1)
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          BRANCH="${{ github.ref_name }}"
+
+          if [ "$BRANCH" = "master" ]; then
+            TAG="${FW_VERSION}-${SHORT_SHA}"
+            NAME="OGX-Mini ${FW_VERSION} (${SHORT_SHA})"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            # Rolling develop prerelease (same tag updated each push)
+            TAG="develop-latest"
+            NAME="OGX-Mini develop (${FW_VERSION}, ${SHORT_SHA})"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "make_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "fw_version=${FW_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Firmware ${FW_VERSION}"
+            echo
+            echo "- Branch: \`${BRANCH}\`"
+            echo "- Commit: [\`${SHORT_SHA}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})"
+            echo "- Built automatically by GitHub Actions"
+            echo
+            echo "### UF2 files"
+            echo
+            for f in release-files/*.uf2; do
+              echo "- \`$(basename "$f")\`"
+            done
+          } > release-notes.md
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          draft: true
-          files: output/**/*.uf2
-
-      - name: Create Tagged Release
-        uses: softprops/action-gh-release@v2.2.2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: output/**/*.uf2
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          make_latest: ${{ steps.meta.outputs.make_latest }}
+          files: release-files/*.uf2
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

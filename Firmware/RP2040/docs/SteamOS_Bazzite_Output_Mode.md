@@ -17,14 +17,14 @@ The adapter presents **two USB interfaces** to the PC:
 | Interface | Identity | Purpose |
 |-----------|----------|---------|
 | **Gamepad** | Sony **DualSense** `054c:0ce6`, 64-byte HID input report | Buttons, sticks, triggers, PS button — for Steam / Proton / desktop gamepad APIs |
-| **Mouse** | Standard **relative HID mouse** (separate interface) | Cursor from **DualSense touchpad** only |
+| **Mouse** | Standard **relative HID mouse** (separate interface) | Cursor from a **DualSense** or **DualShock 4** touchpad |
 
 **Input → USB behavior:**
 
 | Input controller | Gamepad report | Touchpad / mouse |
 |------------------|----------------|------------------|
 | **DualSense (PS5)** — Bluetooth or wired USB | **Passthrough** of the real DualSense report (sticks/triggers from host when wired) | Touchpad finger position → **relative mouse** movement; touchpad click (`TP`) → **left click** |
-| **Other pads** (Xbox, DS4, Switch Pro, etc.) | **Synthesized** DualSense report — face buttons, shoulders, triggers, sticks, D-pad, **Share/Options**, **PS**, touchpad-click bit mapped from PadIn | No hardware touchpad — **no mouse** (gamepad only) |
+| **Other pads** (Xbox, DS4, Switch Pro, etc.) | **Synthesized** DualSense report — face buttons, shoulders, triggers, sticks, D-pad, **Share/Options**, **PS**, touchpad-click bit mapped from PadIn, plus **motion**, **battery** and the **DS4 touchpad** | **DS4 over Bluetooth:** touchpad → mouse, like a DualSense. Pads without a touchpad: **no mouse** (gamepad only) |
 
 Face-button mapping to DualSense: **A→Cross**, **B→Circle**, **X→Square**, **Y→Triangle**; **LB/RB→L1/R1**; **Back/Start→Share/Options**; **SYS→PS**. Full table: [Controller_Mappings.md — STEAM mode](Controller_Mappings.md#steamos--bazzite-steam-mode).
 
@@ -38,7 +38,7 @@ When the **input** pad is a **DualSense** (Bluetooth on Pico W / Pico 2 W, or wi
 - **Tap / click** the touchpad → **left mouse button**.
 - The touchpad data is also embedded in the DualSense gamepad report (offset compatible with Linux `hid-playstation`).
 
-Controllers **without** a DualSense touchpad still work as a DualSense gamepad; they do **not** drive the mouse interface.
+A **DualShock 4** over Bluetooth drives the mouse the same way. Controllers **without** a touchpad still work as a DualSense gamepad; they do **not** drive the mouse interface.
 
 ## Other notes
 

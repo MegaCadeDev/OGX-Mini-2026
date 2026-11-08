@@ -1,8 +1,11 @@
 #include "class/cdc/cdc_device.h"
 #include "bsp/board_api.h"
+#include "pico/time.h"
 
 #include "Board/ogxm_log.h"
+#include "Diagnostics/Diagnostics.h"
 #include "Descriptors/CDCDev.h"
+#include "Gamepad/I2CWirePad.h"
 #include "USBDevice/DeviceDriver/WebApp/WebApp.h"
 
 void WebAppDevice::initialize() 
@@ -183,8 +186,11 @@ bool WebAppDevice::write_profile(uint8_t index, const UserProfile& profile, Pack
 bool WebAppDevice::write_gamepad(uint8_t index, const Gamepad::PadIn& pad_in)
 {
     Packet packet_in;
-    const uint8_t* pad_in_data = reinterpret_cast<const uint8_t*>(&pad_in);
-    const uint8_t total_chunks = static_cast<uint8_t>((sizeof(Gamepad::PadIn) + packet_in.data.size() - 1) / packet_in.data.size());
+    /* The web app only accepts the legacy 23-byte pad layout; PadIn grew IMU and
+     * touchpad fields, so it rejected every input packet ("Invalid data length"). */
+    const I2CWirePadIn wire = i2c_wire_pad_from(pad_in);
+    const uint8_t* pad_in_data = reinterpret_cast<const uint8_t*>(&wire);
+    const uint8_t total_chunks = static_cast<uint8_t>((sizeof(wire) + packet_in.data.size() - 1) / packet_in.data.size());
     uint8_t current_chunk = 0;
 
     packet_in.header.packet_id = PacketID::SET_GP_IN;
@@ -195,7 +201,7 @@ bool WebAppDevice::write_gamepad(uint8_t index, const Gamepad::PadIn& pad_in)
     while (current_chunk < total_chunks)
     {
         size_t offset = current_chunk * packet_in.data.size();
-        size_t remaining_bytes = sizeof(Gamepad::PadIn) - offset;
+        size_t remaining_bytes = sizeof(wire) - offset;
         uint8_t current_chunk_len = static_cast<uint8_t>(std::min(packet_in.data.size(), remaining_bytes));
 
         packet_in.header.chunk_idx = current_chunk;
@@ -212,6 +218,51 @@ bool WebAppDevice::write_gamepad(uint8_t index, const Gamepad::PadIn& pad_in)
     return true;
 }
 
+/* Adapter options, one packet (version byte first). */
+bool WebAppDevice::write_dongle_settings()
+{
+    Packet packet_in;
+    const dongle_settings::Settings& settings = dongle_settings::get();
+    packet_in.header.packet_id = PacketID::GET_DONGLE_SETTINGS;
+    packet_in.header.max_gamepads = MAX_GAMEPADS;
+    packet_in.header.chunks_total = 1;
+    packet_in.header.chunk_idx = 0;
+    packet_in.header.chunk_len = sizeof(settings);
+    std::memcpy(packet_in.data.data(), &settings, sizeof(settings));
+    return write_packet(packet_in);
+}
+
+/* Diagnostics report as JSON text, split over packets (up to 255 chunks). */
+bool WebAppDevice::write_diagnostics()
+{
+    /* Up to 255 chunks; the RP2350 keeps more events (Diagnostics/Diagnostics.h kEvents). */
+#if defined(PICO_RP2350)
+    static char report[255 * 55];
+#else
+    static char report[12 * 1024];
+#endif
+    const size_t len = diag::report_json(report, sizeof(report), to_ms_since_boot(get_absolute_time()));
+    Packet packet_in;
+    const size_t chunk = packet_in.data.size();
+    const size_t total = (len + chunk - 1) / chunk;
+    if (total == 0 || total > 255)
+        return false;
+    packet_in.header.packet_id = PacketID::GET_DIAGNOSTICS;
+    packet_in.header.max_gamepads = MAX_GAMEPADS;
+    packet_in.header.chunks_total = static_cast<uint8_t>(total);
+    for (size_t i = 0; i < total; ++i)
+    {
+        const size_t offset = i * chunk;
+        const size_t n = std::min(chunk, len - offset);
+        packet_in.header.chunk_idx = static_cast<uint8_t>(i);
+        packet_in.header.chunk_len = static_cast<uint8_t>(n);
+        std::memcpy(packet_in.data.data(), report + offset, n);
+        if (!write_packet(packet_in))
+            return false;
+    }
+    return true;
+}
+
 void WebAppDevice::write_error()
 {
     Packet packet_in;
@@ -222,6 +273,15 @@ void WebAppDevice::write_error()
 
 void WebAppDevice::process(const uint8_t idx, Gamepad& gamepad) 
 {
+    diag::tick(to_ms_since_boot(get_absolute_time()));  // rates for boards without Bluetooth too
+    /* End a rumble test once its time is up. */
+    if (rumble_test_until_ms_ != 0 &&
+        static_cast<int32_t>(to_ms_since_boot(get_absolute_time()) - rumble_test_until_ms_) >= 0)
+    {
+        rumble_test_until_ms_ = 0;
+        gamepad.set_pad_out(Gamepad::PadOut());
+    }
+
     if (!tud_cdc_connected())
     {
         return;
@@ -289,16 +349,130 @@ void WebAppDevice::process(const uint8_t idx, Gamepad& gamepad)
                 }
                 break;
 
+            case PacketID::GET_DONGLE_SETTINGS:
+                if (!write_dongle_settings())
+                {
+                    write_error();
+                    return;
+                }
+                break;
+
+            case PacketID::SET_DONGLE_SETTINGS:
+            {
+                dongle_settings::Settings settings{};
+                if (!dongle_settings::decode(packet_out.data.data(), packet_out.header.chunk_len, settings))
+                {
+                    write_error();
+                    return;
+                }
+                user_settings_.store_dongle_settings(settings);  // reboots
+                break;
+            }
+
+            case PacketID::GET_DIAGNOSTICS:
+                if (!write_diagnostics())
+                {
+                    write_error();
+                    return;
+                }
+                break;
+
+            case PacketID::SET_GP_OUT:
+            {
+                /* Rumble test: played on the connected pad through the same path as a host's
+                 * rumble, for at most 10 s. */
+                if (packet_out.header.chunk_len < 4)
+                {
+                    write_error();
+                    return;
+                }
+                static constexpr uint16_t MAX_TEST_MS = 10000;
+                uint16_t duration = static_cast<uint16_t>(packet_out.data[2] | (packet_out.data[3] << 8));
+                if (duration > MAX_TEST_MS)
+                    duration = MAX_TEST_MS;
+                Gamepad::PadOut gp_out;
+                gp_out.rumble_l = packet_out.data[0];
+                gp_out.rumble_r = packet_out.data[1];
+                gamepad.set_pad_out(gp_out);
+                const uint32_t until = to_ms_since_boot(get_absolute_time()) + duration;
+                rumble_test_until_ms_ = until != 0 ? until : 1;
+                Packet ack;
+                ack.header.packet_id = PacketID::SET_GP_OUT;
+                ack.header.chunks_total = 1;
+                ack.header.chunk_len = 0;
+                write_packet(ack);
+                break;
+            }
+
             default:
                 // write_response(PacketID::RESP_ERROR);
                 return;
         }
     } 
-    else if (gamepad.new_pad_in())
+    else
     {
-        OGXM_LOG("Writing gamepad input\n");
-        Gamepad::PadIn gp_in = gamepad.get_pad_in();
-        write_gamepad(idx, gp_in);
+        send_live_input(idx, gamepad);
+    }
+}
+
+/* The newest input at most every kLiveIntervalMs (the last state is always sent, also when
+ * nothing new follows); the touchpad when it changes, or every kTouchRefreshMs. */
+void WebAppDevice::send_live_input(uint8_t idx, Gamepad& gamepad)
+{
+    if (idx >= MAX_GAMEPADS)
+        return;
+    if (gamepad.new_pad_in())
+    {
+        live_in_[idx] = gamepad.get_pad_in();
+        live_pending_[idx] = true;
+    }
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    if (!live_pending_[idx] || now - live_sent_ms_[idx] < kLiveIntervalMs)
+        return;
+    const Gamepad::PadIn& gp_in = live_in_[idx];
+    if (!write_gamepad(idx, gp_in))
+        return;
+    live_pending_[idx] = false;
+    live_sent_ms_[idx] = now;
+    if (!gp_in.touchpad_valid)
+        return;
+    uint8_t touch[9];
+    std::memcpy(touch, gp_in.touch_raw, 8);
+    touch[8] = gp_in.touchpad_click;
+    if (std::memcmp(touch, touch_sent_[idx], sizeof(touch)) != 0 || now - touch_sent_ms_[idx] >= kTouchRefreshMs)
+    {
+        if (write_touch(idx, gp_in))
+        {
+            std::memcpy(touch_sent_[idx], touch, sizeof(touch));
+            touch_sent_ms_[idx] = now;
+        }
+    }
+}
+
+bool WebAppDevice::write_touch(uint8_t index, const Gamepad::PadIn& pad_in)
+{
+    Packet packet_in;
+    packet_in.header.packet_id = PacketID::GP_TOUCH;
+    packet_in.header.max_gamepads = MAX_GAMEPADS;
+    packet_in.header.player_idx = index;
+    packet_in.header.chunks_total = 1;
+    packet_in.header.chunk_idx = 0;
+    packet_in.header.chunk_len = sizeof(pad_in.touch_raw) + 1;
+    std::memcpy(packet_in.data.data(), pad_in.touch_raw, sizeof(pad_in.touch_raw));
+    packet_in.data[sizeof(pad_in.touch_raw)] = pad_in.touchpad_click;
+    return write_packet(packet_in);
+}
+
+/* When the page opens the port, drop what is left in the transmit FIFO (the tail of a packet cut
+ * when the port last closed), so the page starts on a packet boundary. */
+void WebAppDevice::line_state_cb(uint8_t itf, bool dtr, bool rts)
+{
+    (void)rts;
+    if (dtr)
+    {
+        tud_cdc_n_write_clear(itf);
+        for (uint8_t i = 0; i < MAX_GAMEPADS; ++i)
+            live_pending_[i] = true;  // send the current state right away
     }
 }
 

@@ -5,8 +5,13 @@ function(generate_gatt_header BTSTACK_ROOT GATT_INPUT_PATH GATT_HEADER_OUTPUT_PA
         message(FATAL_ERROR "GATT compilation script not found: ${SCRIPT_PATH}")
     endif()
 
-    if(EXISTS ${GATT_HEADER_OUTPUT_PATH})
-        message(STATUS "GATT header file already exists: ${GATT_HEADER_OUTPUT_PATH}\nTo regenerate a new GATT header, delete the file and compile again.")
+    # Re-run CMake (and this check) whenever the .gatt file is edited.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${GATT_INPUT_PATH})
+
+    # Regenerate when the .gatt file changed, not only when the header
+    # is missing (a stale header left new characteristics undeclared in existing build trees).
+    if(EXISTS ${GATT_HEADER_OUTPUT_PATH} AND NOT ${GATT_INPUT_PATH} IS_NEWER_THAN ${GATT_HEADER_OUTPUT_PATH})
+        message(STATUS "GATT header file up to date: ${GATT_HEADER_OUTPUT_PATH}")
         return()
     endif()
 

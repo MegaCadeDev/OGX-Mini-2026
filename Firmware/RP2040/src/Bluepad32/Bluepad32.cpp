@@ -5,6 +5,7 @@
 #include <pico/mutex.h>
 #include <pico/cyw43_arch.h>
 #include <pico/time.h>
+#include <hardware/watchdog.h>
 
 #include <btstack.h>
 #include "btstack_run_loop.h"
@@ -26,6 +27,11 @@ static std::atomic<bool> s_bt_any_connected_cached{false};
 #include "Bluepad32/ClassicPairingDebug.h"
 #include "Board/board_api.h"
 #include "Board/ogxm_log.h"
+#include "Bluepad32/JoyConSettings.h"
+#include "Bluepad32/RumbleTiming.h"
+#include "Bluepad32/ScanPolicy.h"
+#include "Diagnostics/Diagnostics.h"
+#include "uni_diag_hooks.h"
 #include "Input/InputSlot.h"
 #include "USBHost/HostDriver/FlydigiApex4Wukong/FlydigiApex4WukongBtProbe.h"
 #include "USBHost/HostDriver/FlydigiApex4Wukong/FlydigiApex4WukongBt.h"
@@ -123,8 +129,68 @@ static void bp32_disconnect_controller_and_joycon_partner(uni_hid_device_t* d) {
     uni_hid_device_disconnect(d);
 }
 
+/* The disconnect combo is detected while parsing the pad's own input report. Disconnecting it
+ * (and its Joy-Con partner) right there tore the pair down under the parser's feet and hung the
+ * BT core. Defer the disconnect to a run-loop timer instead. */
+static btstack_timer_source_t s_disconnect_combo_timer;
+static int s_disconnect_combo_idx = -1;
+
+/* After the disconnect combo the adapter stopped accepting controller-initiated reconnections
+ * (no HCI connection request ever arrived), while a fresh boot always accepts them. So reboot
+ * (same output mode) for a clean radio. The reboot is armed on the hardware watchdog *before*
+ * touching the pads: a run-loop timer never fired when the BT core hung while the pads were
+ * going away. Nothing feeds the watchdog, so it always resets. */
+static constexpr uint32_t DISCONNECT_COMBO_REBOOT_DELAY_MS = 1500;
+/* Safety net for the reboot after the last ready pad disconnects (normally 500 ms). */
+static constexpr uint32_t DISCONNECT_REBOOT_WATCHDOG_MS = 3000;
+
+static void disconnect_combo_timer_cb(btstack_timer_source_t* ts)
+{
+    (void)ts;
+    const int idx = s_disconnect_combo_idx;
+    s_disconnect_combo_idx = -1;
+    if (idx < 0 || idx >= CONFIG_BLUEPAD32_MAX_DEVICES)
+        return;
+    uni_hid_device_t* d = uni_hid_device_get_instance_for_idx(idx);
+    if (!d || d->conn.handle == UNI_BT_CONN_HANDLE_INVALID)
+        return;
+    printf("[BP32] Disconnect combo: reboot in %lu ms for a clean reconnect\n",
+           static_cast<unsigned long>(DISCONNECT_COMBO_REBOOT_DELAY_MS));
+    watchdog_enable(DISCONNECT_COMBO_REBOOT_DELAY_MS, true);
+    if (bp32_is_switch_joycon(d)) {
+        /* gap_disconnect() does not complete on live Joy-Con links: ask them to sleep. */
+        const int partner_idx = bp32_get_pair_partner_idx(d);
+        if (partner_idx >= 0 && partner_idx < CONFIG_BLUEPAD32_MAX_DEVICES) {
+            uni_hid_device_t* partner = uni_hid_device_get_instance_for_idx(partner_idx);
+            if (partner && partner != d)
+                uni_hid_parser_switch_request_sleep(partner);
+        }
+        uni_hid_parser_switch_request_sleep(d);
+    } else {
+        bp32_disconnect_controller_and_joycon_partner(d);
+    }
+}
+
+static void schedule_disconnect_combo(int idx)
+{
+    if (s_disconnect_combo_idx >= 0)
+        return;  // already pending
+    s_disconnect_combo_idx = idx;
+    s_disconnect_combo_timer.process = disconnect_combo_timer_cb;
+    s_disconnect_combo_timer.context = nullptr;
+    btstack_run_loop_set_timer(&s_disconnect_combo_timer, 0);
+    btstack_run_loop_add_timer(&s_disconnect_combo_timer);
+}
+
 static constexpr uint32_t FEEDBACK_TIME_MS = 250;
+static_assert(FEEDBACK_TIME_MS == switch_rumble::kFeedbackPeriodMs, "keep Bluepad32/RumbleTiming.h in sync");
 static constexpr uint32_t LED_CHECK_TIME_MS = 500;
+static constexpr uint32_t LED_FAST_BLINK_MS = 250;   // full search for new controllers
+static constexpr uint32_t LED_SLOW_BLINK_MS = 1000;  // reduced search
+
+/* Search for new controllers while others are connected (Bluepad32/ScanPolicy.h). */
+static void apply_scan_policy(int exclude_idx, bool force = false);
+static bool scan_reduced();
 /** Idle pairing health check — restarts BR/LE scan if they died during long USB suspend (e.g. 360 standby). */
 static constexpr uint32_t PAIRING_WATCHDOG_MS = 45000;
 /** If no HID input report reaches us for this long while "connected", the BT link is zombie
@@ -147,9 +213,13 @@ static uint32_t s_last_bt_input_ms[CONFIG_BLUEPAD32_MAX_DEVICES]{};
 static uint32_t s_xbox_ble_ka_last_ms[CONFIG_BLUEPAD32_MAX_DEVICES]{};
 static uint32_t s_sw2_ble_ka_last_ms[CONFIG_BLUEPAD32_MAX_DEVICES]{};
 /** Ignore Start+Select disconnect combo for this long after connect (DS4 can glitch both on first reports). */
-static uint32_t s_bt_disconnect_combo_grace_until_ms[MAX_GAMEPADS]{};
+/* The per-pad state arrays below are indexed both by OGX pad and by Bluetooth slot
+ * (disconnect callback, feedback loop). Sized MAX_GAMEPADS (1 on single-player builds), a pad in
+ * slot 1 (e.g. the right Joy-Con of a pair, on every disconnect) wrote past them into other
+ * variables. Size them for every Bluetooth slot (CONFIG_BLUEPAD32_MAX_DEVICES >= MAX_GAMEPADS). */
+static uint32_t s_bt_disconnect_combo_grace_until_ms[CONFIG_BLUEPAD32_MAX_DEVICES]{};
 /** DS4 BT: delay rumble output (host can request rumble immediately; early FF reports can drop link). */
-static uint32_t s_ps4_rumble_ok_ms[MAX_GAMEPADS]{};
+static uint32_t s_ps4_rumble_ok_ms[CONFIG_BLUEPAD32_MAX_DEVICES]{};
 
 struct BTDevice {
     bool connected{false};
@@ -157,6 +227,12 @@ struct BTDevice {
 };
 
 BTDevice bt_devices_[CONFIG_BLUEPAD32_MAX_DEVICES];
+/* The reboot after the last controller disconnects stores the diagnostics session summary first
+ * (Diagnostics/Diagnostics.h). Flash is written from Core0 (the USB loop), which BT cannot park,
+ * so the BT core asks and Core0 stores and reboots; the watchdog armed for that reboot still
+ * fires if Core0 does not. */
+static std::atomic<bool> s_store_session_and_reboot{false};
+
 btstack_timer_source_t feedback_timer_;
 btstack_timer_source_t led_timer_;
 bool led_timer_set_{false};
@@ -202,10 +278,18 @@ static void gpio_process_timer_cb(btstack_timer_source_t* ts) {
 }
 
 // PS5: touchpad click toggles adaptive triggers (per-controller state)
-static bool adaptive_trigger_enabled_[MAX_GAMEPADS]{false};
-static bool prev_touchpad_clicked_[MAX_GAMEPADS]{false};
+static bool adaptive_trigger_enabled_[CONFIG_BLUEPAD32_MAX_DEVICES]{false};
+static bool prev_touchpad_clicked_[CONFIG_BLUEPAD32_MAX_DEVICES]{false};
 // Defer sending adaptive trigger effect out of BT callback to avoid l2cap_send in callback (reduces input lag)
-static bool pending_adaptive_trigger_send_[MAX_GAMEPADS]{false};
+static bool pending_adaptive_trigger_send_[CONFIG_BLUEPAD32_MAX_DEVICES]{false};
+/* Regression guard: keep the arrays above sized per Bluetooth slot. */
+template <typename T, size_t N>
+constexpr size_t bt_slots_of(const T (&)[N]) { return N; }
+static_assert(bt_slots_of(s_bt_disconnect_combo_grace_until_ms) >= CONFIG_BLUEPAD32_MAX_DEVICES, "sized per BT slot");
+static_assert(bt_slots_of(s_ps4_rumble_ok_ms) >= CONFIG_BLUEPAD32_MAX_DEVICES, "sized per BT slot");
+static_assert(bt_slots_of(adaptive_trigger_enabled_) >= CONFIG_BLUEPAD32_MAX_DEVICES, "sized per BT slot");
+static_assert(bt_slots_of(prev_touchpad_clicked_) >= CONFIG_BLUEPAD32_MAX_DEVICES, "sized per BT slot");
+static_assert(bt_slots_of(pending_adaptive_trigger_send_) >= CONFIG_BLUEPAD32_MAX_DEVICES, "sized per BT slot");
 
 bool any_connected()
 {
@@ -263,54 +347,86 @@ static bool ogxm_is_handheld_wiimote(const uni_hid_device_t* device)
 //This solves a function pointer/crash issue with bluepad32
 void set_rumble(uni_hid_device_t* bp_device, uint16_t length, uint8_t rumble_l, uint8_t rumble_r)
 {
+    /* The host's left motor (rumble_l) is the strong / low-frequency one and the right motor
+     * (rumble_r) the weak one, while Bluepad32's *_play_dual_rumble() take (weak, strong). */
+    const uint8_t weak = rumble_r;
+    const uint8_t strong = rumble_l;
     switch (bp_device->controller_type)
     {
         case CONTROLLER_TYPE_XBoxOneController:
-            uni_hid_parser_xboxone_play_dual_rumble(bp_device, 0, length + 10, rumble_l, rumble_r);
+            uni_hid_parser_xboxone_play_dual_rumble(bp_device, 0, length + 10, weak, strong);
             break;
         case CONTROLLER_TYPE_AndroidController:
             if (bp_device->vendor_id == UNI_HID_PARSER_STADIA_VID && bp_device->product_id == UNI_HID_PARSER_STADIA_PID) 
             {
-                uni_hid_parser_stadia_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+                uni_hid_parser_stadia_play_dual_rumble(bp_device, 0, length, weak, strong);
             }
             break;
         case CONTROLLER_TYPE_PSMoveController:
-            uni_hid_parser_psmove_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_psmove_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_PS3Controller:
-            uni_hid_parser_ds3_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_ds3_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_PS4Controller:
-            uni_hid_parser_ds4_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_ds4_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_PS5Controller:
-            uni_hid_parser_ds5_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_ds5_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_WiiController:
-            uni_hid_parser_wii_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_wii_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_SwitchProController:
         case CONTROLLER_TYPE_SwitchJoyConRight:
         case CONTROLLER_TYPE_SwitchJoyConLeft:
-            uni_hid_parser_switch_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            /* Outlive the feedback period so a long rumble isn't stopped and restarted on
+             * every cycle (see Bluepad32/RumbleTiming.h). */
+            (void)length;
+            uni_hid_parser_switch_play_dual_rumble(bp_device, 0, switch_rumble::kRumbleDurationMs, weak, strong);
             break;
         case CONTROLLER_TYPE_Switch2ProController:
         case CONTROLLER_TYPE_Switch2JoyConRight:
         case CONTROLLER_TYPE_Switch2JoyConLeft:
-            uni_hid_parser_switch2_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_switch2_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         case CONTROLLER_TYPE_SteamControllerTriton:
-            uni_hid_parser_steam_triton_play_dual_rumble(bp_device, 0, length, rumble_l, rumble_r);
+            uni_hid_parser_steam_triton_play_dual_rumble(bp_device, 0, length, weak, strong);
             break;
         default:
             break;
     }
 }
 
+/* Last lightbar colour sent to each DS4 / DualSense. */
+using Lightbar = Gamepad::Lightbar;
+static Lightbar s_lightbar_applied[CONFIG_BLUEPAD32_MAX_DEVICES];
+
+/* Send the host's lightbar colour (STEAM mode) to a DS4 / DualSense when it changes. Waits out
+ * the DS4 post-connect window like rumble does. */
+static void apply_host_lightbar(uni_hid_device_t* d, int bt_idx, const Lightbar& want, uint32_t now_ms)
+{
+    if (!want.valid || d->report_parser.set_lightbar_color == nullptr)
+        return;
+    if (d->controller_type != CONTROLLER_TYPE_PS4Controller &&
+        d->controller_type != CONTROLLER_TYPE_PS5Controller)
+        return;
+    if (d->controller_type == CONTROLLER_TYPE_PS4Controller && now_ms < s_ps4_rumble_ok_ms[bt_idx])
+        return;
+    Lightbar& have = s_lightbar_applied[bt_idx];
+    if (have.valid && have.r == want.r && have.g == want.g && have.b == want.b)
+        return;
+    d->report_parser.set_lightbar_color(d, want.r, want.g, want.b);
+    have = want;
+}
+
 static void send_feedback_cb(btstack_timer_source *ts)
 {
     uni_hid_device_t* bp_device = nullptr;
     const uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+    /* Rumble read once per gamepad per tick (both Joy-Cons of a pair share one). */
+    Gamepad::PadOut pad_out[MAX_GAMEPADS];
+    bool pad_out_read[MAX_GAMEPADS] = {};
 
     for (uint8_t i = 0; i < CONFIG_BLUEPAD32_MAX_DEVICES; ++i)
     {
@@ -339,14 +455,7 @@ static void send_feedback_cb(btstack_timer_source *ts)
             (stall_idx >= 0 && stall_idx < static_cast<int>(MAX_GAMEPADS))
                 ? static_cast<unsigned>(stall_idx)
                 : static_cast<unsigned>(i);
-        if (s_last_bt_input_ms[stall_slot] != 0 &&
-            (now_ms - s_last_bt_input_ms[stall_slot]) > BT_INPUT_STALL_DISCONNECT_MS)
-        {
-            printf("[Bluepad32] BT input stalled (%u ms); forcing disconnect (slot %u)\n",
-                   static_cast<unsigned>(now_ms - s_last_bt_input_ms[stall_slot]), static_cast<unsigned>(i));
-            uni_hid_device_disconnect(bp_device);
-            continue;
-        }
+        
         }
     after_stall_check:
 
@@ -356,7 +465,13 @@ static void send_feedback_cb(btstack_timer_source *ts)
         if (gp_idx < 0 || gp_idx >= static_cast<int>(MAX_GAMEPADS) || bt_devices_[gp_idx].gamepad == nullptr)
             continue;
 
-        Gamepad::PadOut gp_out = bt_devices_[gp_idx].gamepad->get_pad_out();
+        /* Peak since the last tick, so host pulses shorter than FEEDBACK_TIME_MS still play. */
+        if (!pad_out_read[gp_idx])
+        {
+            pad_out[gp_idx] = bt_devices_[gp_idx].gamepad->take_pad_out_peak();
+            pad_out_read[gp_idx] = true;
+        }
+        const Gamepad::PadOut gp_out = pad_out[gp_idx];
         if (bp_device->controller_type == CONTROLLER_TYPE_XBoxOneController && bp_device->hids_cid != 0 &&
             gp_out.rumble_l == 0 && gp_out.rumble_r == 0)
         {
@@ -395,7 +510,12 @@ static void send_feedback_cb(btstack_timer_source *ts)
                 }
             }
         }
+        apply_host_lightbar(bp_device, i, bt_devices_[gp_idx].gamepad->get_host_lightbar(), now_ms);
     }
+    /* Diagnostics: rates roll over; whether new controllers are accepted. */
+    diag::tick(now_ms);
+    diag::searching(uni_bt_enable_new_connections_is_enabled());
+    apply_scan_policy(-1);  // the slot-open time, and a Joy-Con pair completed after device_ready
     if (feedback_timer_set_)
 	{
         btstack_run_loop_set_timer(ts, FEEDBACK_TIME_MS);
@@ -414,10 +534,20 @@ static void check_led_cb(btstack_timer_source *ts)
 #else
     const bool wired_host_pad = false;
 #endif
-    /* Solid LED when a BT pad is connected or a wired USB host controller is active (Pico W mux). */
-    board_api::set_led((any_connected() || wired_host_pad) ? true : led_state);
+    /* The LED shows the search for new controllers (Bluepad32/ScanPolicy.h): fast blink = full
+     * search, slow blink = reduced (a slot open for over a minute, e.g. a lone Joy-Con), solid =
+     * no search (every slot in use, or a wired USB host controller active on the Pico W mux).
+     * Written only when it changes: on a Pico W the LED is on the CYW43, each write is a bus
+     * transfer. */
+    static int s_led_shown = -1;
+    const bool searching = !wired_host_pad && uni_bt_enable_new_connections_is_enabled();
+    const int led = (searching ? led_state : true) ? 1 : 0;
+    if (led != s_led_shown) {
+        board_api::set_led(led != 0);
+        s_led_shown = led;
+    }
 
-    btstack_run_loop_set_timer(ts, LED_CHECK_TIME_MS);
+    btstack_run_loop_set_timer(ts, searching && scan_reduced() ? LED_SLOW_BLINK_MS : LED_FAST_BLINK_MS);
     btstack_run_loop_add_timer(ts);
 }
 
@@ -530,6 +660,141 @@ static bool device_is_ble_hogp(const uni_hid_device_t* d) {
     return false;
 }
 
+/* Search for new controllers only as hard as the free slots need (Bluepad32/ScanPolicy.h). */
+static scan_policy::Scan s_scan_state = scan_policy::Scan::Full;
+
+static bool scan_reduced()
+{
+    return s_scan_state == scan_policy::Scan::Reduced;
+}
+
+/* Restart the periodic inquiry with new timing. gap_inquiry_stop() only asks the controller to
+ * leave periodic inquiry; gap_inquiry_periodic_start() refuses (COMMAND_DISALLOWED) until that is
+ * done, so the restart is retried from a timer until BTstack accepts it. */
+static btstack_timer_source_t s_inquiry_restart_timer;
+static uint8_t s_inquiry_restart_tries = 0;
+static uint16_t s_inquiry_min = scan_policy::kFullMinPeriod, s_inquiry_max = scan_policy::kFullMaxPeriod;
+
+static void inquiry_restart_cb(btstack_timer_source_t* ts)
+{
+    /* The search may have been turned off meanwhile (the other Joy-Con paired). */
+    if (s_scan_state == scan_policy::Scan::Off || !uni_bt_enable_new_connections_is_enabled())
+        return;
+    const uint8_t status = gap_inquiry_periodic_start(scan_policy::kInquiryLength, s_inquiry_max, s_inquiry_min);
+    if (status == ERROR_CODE_COMMAND_DISALLOWED && ++s_inquiry_restart_tries < 40) {
+        btstack_run_loop_set_timer(ts, 50);
+        btstack_run_loop_add_timer(ts);
+    }
+}
+
+static void restart_inquiry(uint16_t min_period, uint16_t max_period)
+{
+    s_inquiry_min = min_period;
+    s_inquiry_max = max_period;
+    uni_bt_set_gap_min_peridic_length(min_period);  // later starts by Bluepad32 use it too
+    uni_bt_set_gap_max_peridic_length(max_period);
+    gap_inquiry_stop();
+    btstack_run_loop_remove_timer(&s_inquiry_restart_timer);
+    s_inquiry_restart_tries = 0;
+    s_inquiry_restart_timer.process = inquiry_restart_cb;
+    btstack_run_loop_set_timer(&s_inquiry_restart_timer, 20);
+    btstack_run_loop_add_timer(&s_inquiry_restart_timer);
+}
+
+/* exclude_idx: a pad that is going away. force: apply again even if the state did not change
+ * (on every pad change: the Joy-Con code turns the search back on by itself for a lone Joy-Con). */
+static void apply_scan_policy(int exclude_idx, bool force)
+{
+#if defined(CONFIG_TARGET_PICO_W)
+    bool used[MAX_GAMEPADS]{};
+    int outputs = 0;
+    bool classic = false, hogp = false;
+    for (int i = 0; i < CONFIG_BLUEPAD32_MAX_DEVICES; ++i) {
+        if (i == exclude_idx || !bt_devices_[i].connected)
+            continue;
+        uni_hid_device_t* d = uni_hid_device_get_instance_for_idx(i);
+        if (!d)
+            continue;
+        if (device_is_ble_hogp(d)) hogp = true;
+        else if (gap_get_connection_type(d->conn.handle) == GAP_CONNECTION_ACL) classic = true;
+        const int out = bp32_get_gamepad_output_idx(d);
+        if (out >= 0 && out < static_cast<int>(MAX_GAMEPADS) && !used[out]) {
+            used[out] = true;
+            ++outputs;
+        }
+    }
+    const bool awaiting = uni_hid_parser_switch_any_awaiting_partner();
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+
+    /* How long a slot has been open with pads connected; a pad going away restarts the count. */
+    static bool s_open = false;
+    static uint32_t s_open_since = 0;
+    if (exclude_idx >= 0)
+        s_open = false;
+    const bool open = awaiting || (outputs > 0 && outputs < static_cast<int>(MAX_GAMEPADS));
+    if (open && !s_open)
+        s_open_since = now;
+    s_open = open;
+    const scan_policy::Scan want = scan_policy::decide(outputs, MAX_GAMEPADS, awaiting, open ? now - s_open_since : 0);
+
+    const bool off_undone = want == scan_policy::Scan::Off && uni_bt_enable_new_connections_is_enabled();
+    if (want == s_scan_state && !force && !off_undone)
+        return;
+    const scan_policy::Scan previous = s_scan_state;
+    s_scan_state = want;
+
+    switch (want) {
+        case scan_policy::Scan::Off:
+            uni_bt_enable_new_connections_unsafe(false);  // stops BR/EDR inquiry and the BLE scan
+            uni_bt_bredr_scan_stop();                     // also when started outside that flag
+            uni_bt_le_scan_stop();
+            if (previous != scan_policy::Scan::Off) {
+                if (open)
+                    diag::event(now, "search for new controllers off: search time over");
+                else
+                    diag::event(now, "search for new controllers off: all %d slot(s) in use", outputs);
+            }
+            break;
+        case scan_policy::Scan::Reduced:
+        case scan_policy::Scan::Full: {
+            const bool reduced = want == scan_policy::Scan::Reduced;
+            gap_set_scan_parameters(0, reduced ? scan_policy::kReducedInterval : scan_policy::kFullInterval,
+                                    reduced ? scan_policy::kReducedWindow : scan_policy::kFullWindow);
+            const uint16_t min_period = reduced ? scan_policy::kReducedMinPeriod : scan_policy::kFullMinPeriod;
+            const uint16_t max_period = reduced ? scan_policy::kReducedMaxPeriod : scan_policy::kFullMaxPeriod;
+            if (outputs <= 0 && !awaiting) {
+                /* No pad: the pairing paths (restore_bt_pairing_mode) run the search. */
+                uni_bt_set_gap_min_peridic_length(min_period);
+                uni_bt_set_gap_max_peridic_length(max_period);
+                break;
+            }
+            if (!uni_bt_enable_new_connections_is_enabled())
+                uni_bt_enable_new_connections_unsafe(true);  // starts BR/EDR inquiry and the BLE scan
+            if (awaiting) {
+                /* Lone Joy-Con: BLE scan off (as its own path does), inquiry with this timing. */
+                uni_bt_le_scan_stop();
+                if (force || previous != want)
+                    restart_inquiry(min_period, max_period);
+            } else {
+                uni_bt_set_gap_min_peridic_length(min_period);
+                uni_bt_set_gap_max_peridic_length(max_period);
+                uni_bt_le_scan_stop();  // new parameters apply when the scan starts
+                if (!hogp)
+                    uni_bt_le_scan_start();
+                if (classic || hogp)
+                    uni_bt_bredr_scan_stop();  // as device_ready does with a pad connected
+            }
+            if (previous != want)
+                diag::event(now, reduced ? "search for new controllers reduced" : "search for new controllers full");
+            break;
+        }
+    }
+#else
+    (void)exclude_idx;
+    (void)force;
+#endif
+}
+
 /** CYW43: periodic BR/EDR inquiry while a Classic ACL link is up can drop DS4/PS3 in ~1–2 s. */
 static void maybe_restart_bredr_inquiry_after_disconnect(int disconnected_idx) {
 #if defined(CONFIG_TARGET_PICO_W)
@@ -591,8 +856,8 @@ static bool s_bt_disconnect_reboot_pending = false;
 static void bt_disconnect_reboot_cb(btstack_timer_source_t* ts) {
     (void)ts;
     s_bt_disconnect_reboot_pending = false;
-    printf("[BP32] Last Xbox BLE controller disconnected — restarting Pico for clean reconnect\n");
-    board_api::reboot();
+    printf("[BP32] Last controller disconnected — storing the session, then restarting\n");
+    s_store_session_and_reboot.store(true);  // Core0: UserSettings stores it and reboots
 }
 
 /** Xbox Series / One S over BLE (HOGP) — in-place reconnect leaves HIDS/bond state bad. */
@@ -687,9 +952,12 @@ static void restore_bt_pairing_mode(int disconnected_idx) {
     led_timer_set_ = true;
     led_timer_.process = check_led_cb;
     led_timer_.context = nullptr;
-    btstack_run_loop_set_timer(&led_timer_, LED_CHECK_TIME_MS);
+    /* No board_api::set_led() here. On Pico W the LED sits on the CYW43 chip, and this runs
+     * inside the HCI/L2CAP disconnect event: the LED ioctl deadlocked the BT core when the last
+     * pad of a Joy-Con pair disconnected. check_led_cb (timer context) takes over the LED right
+     * away. */
+    btstack_run_loop_set_timer(&led_timer_, 1);
     btstack_run_loop_add_timer(&led_timer_);
-    board_api::set_led(false);
 
 #if defined(CONFIG_EN_BLUETOOTH) && defined(CONFIG_TARGET_PICO_W)
     ensure_idle_pairing_scans(disconnected_idx);
@@ -712,6 +980,18 @@ static void device_disconnected_cb(uni_hid_device_t* device) {
     }
     flydigi_apex4_bt_on_disconnected(device);
     gamesir_cyclone2_bt_on_disconnected(device);
+    {
+        const uint32_t now = to_ms_since_boot(get_absolute_time());
+        /* The last ready controller going away ends the session: freeze its summary while the
+         * controller is still in it (it is stored before the reboot below). */
+        bool others = false;
+        for (int i = 0; i < CONFIG_BLUEPAD32_MAX_DEVICES; ++i)
+            others |= i != idx && bt_devices_[i].connected;
+        if (!others && s_bt_slot_was_ready[idx])
+            diag::session_freeze(now);
+        diag::slot_disconnected(static_cast<size_t>(idx), now);
+        diag::event(now, "slot %d disconnected: %s", idx, device->name);
+    }
 
     const bool was_ready = s_bt_slot_was_ready[idx];
     s_bt_slot_was_ready[idx] = false;
@@ -732,6 +1012,7 @@ static void device_disconnected_cb(uni_hid_device_t* device) {
     s_sw2_ble_ka_last_ms[idx] = 0;
     s_bt_disconnect_combo_grace_until_ms[idx] = 0;
     s_ps4_rumble_ok_ms[idx] = 0;
+    s_lightbar_applied[idx] = Lightbar();
     prev_touchpad_clicked_[idx] = false;
     pending_adaptive_trigger_send_[idx] = false;
     /* Never clear PadIn for an OGX slot owned by USB (BT idx often equals USB pad 0). */
@@ -756,30 +1037,45 @@ static void device_disconnected_cb(uni_hid_device_t* device) {
         btstack_run_loop_remove_timer(&feedback_timer_);
     }
 
+    apply_scan_policy(idx, true);  // a slot is free again
     if (any_other_connected)
         return;
 
     /* Immediately show pairing mode (LED blink + BT scan). */
     restore_bt_pairing_mode(idx);
 
-    /*
-     * Xbox BLE needs a full reboot after a ready disconnect — bonded re-encryption /
-     * leftover HIDS state otherwise leave the adapter frozen until unplug.
-     * Classic BT and non-Xbox BLE (8BitDo Android/Switch, DualShock, Joy-Con, etc.)
-     * reconnect in place; rebooting those on OG Xbox looks like a freeze.
-     * Failed pair attempts must not reboot or we never stay in pairing mode.
-     */
-    const bool xbox_ble = device_is_xbox_ble(device);
-    if (was_ready && xbox_ble && !s_bt_disconnect_reboot_pending) {
-        s_bt_disconnect_reboot_pending = true;
-        s_bt_disconnect_reboot_timer.process = bt_disconnect_reboot_cb;
-        s_bt_disconnect_reboot_timer.context = nullptr;
-        btstack_run_loop_set_timer(&s_bt_disconnect_reboot_timer, 500);
-        btstack_run_loop_add_timer(&s_bt_disconnect_reboot_timer);
-        printf("[BP32] Pairing mode on — Xbox BLE reboot in 500 ms for clean reconnect\n");
-    } else if (was_ready) {
-        printf("[BP32] Pairing mode on — Classic/non-Xbox-BLE reconnect without reboot\n");
-    }
+   /*
+	 * Reboot after a controller that previously reached DEVICE_READY disconnects.
+	 *
+	 * The original behavior intentionally avoided rebooting Classic BT and non-Xbox
+	 * BLE devices because, on OG Xbox, the adapter briefly disappearing and
+	 * re-enumerating can look like a short freeze.
+	 *
+	 * We are changing that behavior because some Classic HID controllers can leave
+	 * Bluepad32 / BTstack in a stale state after a real disconnect. In that state the
+	 * controller may reconnect at the Bluetooth level but never resume usable input
+	 * until the adapter itself is power-cycled.
+	 *
+	 * A brief reboot after a confirmed, previously-ready disconnect is preferable to
+	 * requiring the user to physically unplug and reconnect the adapter.
+	 *
+	 * Failed pairing attempts must NOT reboot. A device that never reached
+	 * DEVICE_READY leaves was_ready == false, which allows pairing mode to remain
+	 * active instead of entering a reboot loop after every failed connection attempt.
+	 */
+	if (was_ready && !s_bt_disconnect_reboot_pending) {
+		s_bt_disconnect_reboot_pending = true;
+		s_bt_disconnect_reboot_timer.process = bt_disconnect_reboot_cb;
+		s_bt_disconnect_reboot_timer.context = nullptr;
+		btstack_run_loop_set_timer(&s_bt_disconnect_reboot_timer, 500);
+		btstack_run_loop_add_timer(&s_bt_disconnect_reboot_timer);
+		/* The reboot above is a run-loop timer on the BT core, which never fires if that core
+		 * hangs while the pads go away (seen with the disconnect combo, and a suspected freeze
+		 * after turning a Joy-Con pair off). Arm the hardware watchdog too (nothing feeds it),
+		 * like the combo does, so the board always reboots. */
+		watchdog_enable(DISCONNECT_REBOOT_WATCHDOG_MS, true);
+		printf("[BP32] Pairing mode on — reboot in 500 ms for clean reconnect\n");
+	}
 }
 
 static void ogxm_play_connection_rumble(uni_hid_device_t* device)
@@ -835,6 +1131,15 @@ static uni_error_t device_ready_cb(uni_hid_device_t* device) {
     }
 
     bt_devices_[idx].connected = true;
+    {
+        const bool le = gap_get_connection_type(device->conn.handle) == GAP_CONNECTION_LE;
+        const uint32_t now = to_ms_since_boot(get_absolute_time());
+        diag::slot_connected(static_cast<size_t>(idx), now, device->name, device->vendor_id,
+                             device->product_id, static_cast<uint8_t>(device->controller_type), le,
+                             device->conn.handle, device->conn.btaddr);
+        diag::event(now, "slot %d ready: %s (%04x:%04x, %s)", idx, device->name, device->vendor_id,
+                    device->product_id, le ? "LE" : "Classic");
+    }
     s_bt_slot_was_ready[idx] = true;
     flydigi_apex4_bt_on_ready(device);
     gamesir_cyclone2_bt_on_ready(device);
@@ -923,11 +1228,8 @@ static uni_error_t device_ready_cb(uni_hid_device_t* device) {
         ds5_set_adaptive_trigger_effect(device, UNI_ADAPTIVE_TRIGGER_TYPE_RIGHT, &off);
     }
 
-    if (led_timer_set_) {
-        led_timer_set_ = false;
-        btstack_run_loop_remove_timer(&led_timer_);
-        board_api::set_led(true);
-    }
+    /* The LED timer keeps running: check_led_cb shows the search state (solid once it stops). */
+    apply_scan_policy(-1, true);  // a pad is ready
     if (!feedback_timer_set_) {
         feedback_timer_set_ = true;
         feedback_timer_.process = send_feedback_cb;
@@ -963,6 +1265,10 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
 
     uni_gamepad_t *uni_gp = &controller->gamepad;
     const int bt_slot = uni_hid_device_get_idx_for_instance(device);
+    if (bt_slot >= 0) {  // battery for the diagnostics (report timing: uni_diag_on_input_report)
+        if (controller->battery != UNI_CONTROLLER_BATTERY_NOT_AVAILABLE)
+            diag::slot_battery(static_cast<size_t>(bt_slot), controller->battery);
+    }
     int idx = bp32_get_gamepad_output_idx(device);
     if (idx < 0)
         idx = bt_slot;
@@ -1058,6 +1364,10 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
         if (uni_gp->misc_buttons & MISC_BUTTON_BACK)    gp_in.buttons |= gamepad->MAP_BUTTON_BACK;
         if (uni_gp->misc_buttons & MISC_BUTTON_START)   gp_in.buttons |= gamepad->MAP_BUTTON_START;
         if (uni_gp->misc_buttons & MISC_BUTTON_SYSTEM)  gp_in.buttons |= gamepad->MAP_BUTTON_SYS;
+        /* Capture (Switch pads) is the Misc button; the DS4 / DualSense touchpad press is added
+         * below. (On a DualSense, MISC_BUTTON_CAPTURE is the mute button: left out.) */
+        if ((uni_gp->misc_buttons & MISC_BUTTON_CAPTURE) && device->controller_type != CONTROLLER_TYPE_PS5Controller)
+            gp_in.buttons |= gamepad->MAP_BUTTON_MISC;
     }
     else {
         if (uni_gp->buttons & BUTTON_A) gp_in.buttons |= gamepad->MAP_BUTTON_A;
@@ -1071,10 +1381,17 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
         if (uni_gp->misc_buttons & MISC_BUTTON_BACK)    gp_in.buttons |= gamepad->MAP_BUTTON_BACK;
         if (uni_gp->misc_buttons & MISC_BUTTON_START)   gp_in.buttons |= gamepad->MAP_BUTTON_START;
         if (uni_gp->misc_buttons & MISC_BUTTON_SYSTEM)  gp_in.buttons |= gamepad->MAP_BUTTON_SYS; 
+        /* Capture (Switch pads) is the Misc button; the DS4 / DualSense touchpad press is added
+         * below. (On a DualSense, MISC_BUTTON_CAPTURE is the mute button: left out.) */
+        if ((uni_gp->misc_buttons & MISC_BUTTON_CAPTURE) && device->controller_type != CONTROLLER_TYPE_PS5Controller)
+            gp_in.buttons |= gamepad->MAP_BUTTON_MISC;
     }
 
     // Check for disconnect combo: Start+Select for most controllers, L3+R3 for OUYA (no Start/Select)
-    static uint32_t disconnect_combo_hold_time[MAX_GAMEPADS] = {0};
+    /* Hold time is measured in ms (report rates differ per pad) and matches the 3 s of the
+     * mode-change combos. */
+    static constexpr uint32_t DISCONNECT_COMBO_HOLD_MS = 3000;
+    static uint32_t disconnect_combo_since_ms[MAX_GAMEPADS] = {0};
     const uint32_t now_cb = to_ms_since_boot(get_absolute_time());
     const bool combo_grace =
         (idx >= 0 && idx < MAX_GAMEPADS && now_cb < s_bt_disconnect_combo_grace_until_ms[idx]);
@@ -1084,18 +1401,18 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
         : ((uni_gp->misc_buttons & MISC_BUTTON_START) && (uni_gp->misc_buttons & MISC_BUTTON_BACK));
 
     if (combo_grace) {
-        disconnect_combo_hold_time[idx] = 0;
+        disconnect_combo_since_ms[idx] = 0;
     } else if (combo_pressed) {
-        disconnect_combo_hold_time[idx]++;
-        // Require combo to be held for ~500ms (assuming ~60Hz callback rate, ~30 frames)
-        if (disconnect_combo_hold_time[idx] >= 30) {
+        if (disconnect_combo_since_ms[idx] == 0)
+            disconnect_combo_since_ms[idx] = now_cb ? now_cb : 1;
+        if (now_cb - disconnect_combo_since_ms[idx] >= DISCONNECT_COMBO_HOLD_MS) {
             printf("[BP32] Disconnect combo detected, disconnecting controller %d\n", idx);
-            bp32_disconnect_controller_and_joycon_partner(device);
-            disconnect_combo_hold_time[idx] = 0;
+            schedule_disconnect_combo(idx);
+            disconnect_combo_since_ms[idx] = 0;
             return; // Don't process further input after disconnect
         }
     } else {
-        disconnect_combo_hold_time[idx] = 0;
+        disconnect_combo_since_ms[idx] = 0;
     }
 
     // Prefer analog triggers (brake / throttle) when present, but fall back to
@@ -1144,6 +1461,10 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
             break;
         case CONTROLLER_TYPE_SwitchProController:
         case CONTROLLER_TYPE_Switch2ProController:
+        /* Joy-Cons too. The parser already aligns the right Joy-Con's axes with the left/Pro
+         * ones, and a merged pair carries the selected half's IMU. */
+        case CONTROLLER_TYPE_SwitchJoyConLeft:
+        case CONTROLLER_TYPE_SwitchJoyConRight:
             gp_in.motion_source = Gamepad::PadIn::MOTION_SRC_SWITCH_PRO;
             break;
         case CONTROLLER_TYPE_WiiController:
@@ -1175,21 +1496,51 @@ static void controller_data_cb(uni_hid_device_t* device, uni_controller_t* contr
             gp_in.accel[i] = uni_gp->accel[i];
             gp_in.gyro[i] = uni_gp->gyro[i];
         }
+        /* Joy-Con motion is in the upright frame; rotate for how it is held. */
+        if (bp32_is_switch_joycon(device)) {
+            const auto jc = joycon_settings::get();
+            const bool paired = bp32_get_pair_partner_idx(device) >= 0;
+            const bool left = paired ? !jc.pair_imu_right
+                                     : device->controller_type == CONTROLLER_TYPE_SwitchJoyConLeft;
+            /* PadIn is packed, so accel / gyro are not 4-byte aligned: rotate aligned copies (a
+             * plain int32_t* to them lets the compiler use paired loads, which fault there). */
+            int32_t accel[3], gyro[3];
+            for (int i = 0; i < 3; i++) {
+                accel[i] = gp_in.accel[i];
+                gyro[i] = gp_in.gyro[i];
+            }
+            joycon_settings::apply_orientation(left, paired ? jc.pair_orientation : jc.solo_orientation,
+                                               accel, gyro);
+            for (int i = 0; i < 3; i++) {
+                gp_in.accel[i] = accel[i];
+                gp_in.gyro[i] = gyro[i];
+            }
+        }
+    }
+
+    /* Touchpad (DS4 and DualSense) and battery, for the output modes that report them. */
+    gp_in.battery = device->controller.battery;
+    if (device->controller_type == CONTROLLER_TYPE_PS4Controller ||
+        device->controller_type == CONTROLLER_TYPE_PS5Controller) {
+        uint8_t touch_points[8]{};
+        bool touchpad_click = false;
+        if (device->controller_type == CONTROLLER_TYPE_PS5Controller)
+            uni_hid_parser_ds5_get_touchpad(device, touch_points, &touchpad_click);
+        else
+            uni_hid_parser_ds4_get_touchpad(device, touch_points, &touchpad_click);
+        std::memcpy(gp_in.touch_raw, touch_points, sizeof(gp_in.touch_raw));
+        gp_in.touchpad_click = touchpad_click ? 1 : 0;
+        gp_in.touchpad_valid = 1;
+        if (touchpad_click)  // the touchpad press is the Misc button, mappable like the others
+            gp_in.buttons |= gamepad->MAP_BUTTON_MISC;
     }
 
     if (SteamActive::is_enabled()) {
         SteamPassthrough::input_has_touchpad =
             (device->controller_type == CONTROLLER_TYPE_PS5Controller);
         SteamBtReport::update_from_uni_gamepad(uni_gp);
-        if (device->controller_type == CONTROLLER_TYPE_PS5Controller) {
-            uint8_t touch_points[8]{};
-            bool touchpad_click = false;
-            uni_hid_parser_ds5_get_touchpad(device, touch_points, &touchpad_click);
-            SteamTouchpad::apply_to_passthrough(touch_points, touchpad_click);
-            std::memcpy(gp_in.touch_raw, touch_points, sizeof(gp_in.touch_raw));
-            gp_in.touchpad_click = touchpad_click ? 1 : 0;
-            gp_in.touchpad_valid = 1;
-        }
+        if (device->controller_type == CONTROLLER_TYPE_PS5Controller)
+            SteamTouchpad::apply_to_passthrough(gp_in.touch_raw, gp_in.touchpad_click != 0);
     }
 
     gamepad->set_pad_in_from_bluetooth(gp_in);
@@ -1313,6 +1664,10 @@ void wired_usb_release_enable_bt_pairing() {
 #endif
 }
 
+bool take_store_session_and_reboot() {
+    return s_store_session_and_reboot.exchange(false);
+}
+
 void on_usb_device_resume() {
     if (!s_btstack_run_loop_ready.load(std::memory_order_acquire)) {
         return;
@@ -1324,6 +1679,150 @@ void on_usb_device_resume() {
 #endif
 }
 
+/* Diagnostics (Diagnostics/Diagnostics.h), from events the stack sends anyway (no command is
+ * sent for them): LE connection parameters, link mode, searches and disconnect reasons. */
+static_assert(CONFIG_BLUEPAD32_MAX_DEVICES <= diag::kSlots, "diagnostics slots");
+static btstack_packet_callback_registration_t s_diag_hci_cb;
+
+static void diag_hci_handler(uint8_t packet_type, uint16_t channel, uint8_t* packet, uint16_t size)
+{
+    (void)channel;
+    (void)size;
+    if (packet_type != HCI_EVENT_PACKET)
+        return;
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    switch (hci_event_packet_get_type(packet)) {
+        case HCI_EVENT_LE_META:
+            switch (hci_event_le_meta_get_subevent_code(packet)) {
+                case HCI_SUBEVENT_LE_CONNECTION_COMPLETE:
+                    if (hci_subevent_le_connection_complete_get_status(packet) == 0) {
+                        const uint16_t h = hci_subevent_le_connection_complete_get_connection_handle(packet);
+                        const uint16_t iv = hci_subevent_le_connection_complete_get_conn_interval(packet);
+                        const uint16_t lat = hci_subevent_le_connection_complete_get_conn_latency(packet);
+                        const uint16_t to = hci_subevent_le_connection_complete_get_supervision_timeout(packet);
+                        diag::le_parameters(h, iv, lat, to);
+                        diag::event(now, "LE connected 0x%04x: interval %u.%02u ms, latency %u, timeout %u ms", h,
+                                    iv * 125 / 100, iv * 125 % 100, lat, to * 10);
+                    }
+                    break;
+                case HCI_SUBEVENT_LE_ENHANCED_CONNECTION_COMPLETE_V1:
+                    if (hci_subevent_le_enhanced_connection_complete_v1_get_status(packet) == 0) {
+                        const uint16_t h = hci_subevent_le_enhanced_connection_complete_v1_get_connection_handle(packet);
+                        const uint16_t iv = hci_subevent_le_enhanced_connection_complete_v1_get_conn_interval(packet);
+                        const uint16_t lat = hci_subevent_le_enhanced_connection_complete_v1_get_conn_latency(packet);
+                        const uint16_t to = hci_subevent_le_enhanced_connection_complete_v1_get_supervision_timeout(packet);
+                        diag::le_parameters(h, iv, lat, to);
+                        diag::event(now, "LE connected 0x%04x: interval %u.%02u ms, latency %u, timeout %u ms", h,
+                                    iv * 125 / 100, iv * 125 % 100, lat, to * 10);
+                    }
+                    break;
+                case HCI_SUBEVENT_LE_CONNECTION_UPDATE_COMPLETE:
+                    if (hci_subevent_le_connection_update_complete_get_status(packet) == 0) {
+                        const uint16_t h = hci_subevent_le_connection_update_complete_get_connection_handle(packet);
+                        const uint16_t iv = hci_subevent_le_connection_update_complete_get_conn_interval(packet);
+                        const uint16_t lat = hci_subevent_le_connection_update_complete_get_conn_latency(packet);
+                        const uint16_t to = hci_subevent_le_connection_update_complete_get_supervision_timeout(packet);
+                        diag::le_parameters(h, iv, lat, to);
+                        diag::event(now, "LE updated 0x%04x: interval %u.%02u ms, latency %u, timeout %u ms", h,
+                                    iv * 125 / 100, iv * 125 % 100, lat, to * 10);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case HCI_EVENT_MODE_CHANGE:
+            if (hci_event_mode_change_get_status(packet) == 0) {
+                const uint16_t h = hci_event_mode_change_get_handle(packet);
+                const uint8_t mode = hci_event_mode_change_get_mode(packet);
+                const uint16_t iv = hci_event_mode_change_get_interval(packet);
+                diag::link_mode(h, mode, iv);
+                diag::event(now, "link 0x%04x: %s mode, interval %u.%03u ms", h,
+                            mode == 2 ? "sniff" : mode == 0 ? "active" : mode == 1 ? "hold" : "park",
+                            iv * 625 / 1000, iv * 625 % 1000);
+            }
+            break;
+        case HCI_EVENT_INQUIRY_COMPLETE:
+            diag::inquiry_complete(now);
+            break;
+        case GAP_EVENT_ADVERTISING_REPORT:
+        case GAP_EVENT_EXTENDED_ADVERTISING_REPORT:
+            diag::le_adv_report();
+            break;
+        case HCI_EVENT_DISCONNECTION_COMPLETE:
+            diag::event(now, "link 0x%04x closed, reason 0x%02x",
+                        hci_event_disconnection_complete_get_connection_handle(packet),
+                        hci_event_disconnection_complete_get_reason(packet));
+            break;
+        default:
+            break;
+    }
+}
+
+} // namespace bluepad32
+
+/* Bluepad32 diagnostics hooks (patches/bluepad32_diagnostics_hooks.diff). */
+extern "C" void uni_diag_on_input_report(struct uni_hid_device_s* d, const uint8_t* report, uint16_t len)
+{
+    const int slot = uni_hid_device_get_idx_for_instance(d);
+    if (slot < 0 || !report || len == 0)
+        return;
+    /* Input timing per physical device (each half of a merged Joy-Con pair on its own); Switch
+     * subcommand replies (0x21) are not input. */
+    if (!(d->controller_type == CONTROLLER_TYPE_SwitchJoyConLeft || d->controller_type == CONTROLLER_TYPE_SwitchJoyConRight ||
+          d->controller_type == CONTROLLER_TYPE_SwitchProController) || report[0] != 0x21)
+        diag::slot_report(static_cast<size_t>(slot), to_ms_since_boot(get_absolute_time()));
+    /* The pads' own report counters: DS4 report 0x11 (6 bits, byte 9), DualSense 0x31 (byte 8). */
+    if (d->controller_type == CONTROLLER_TYPE_PS4Controller && report[0] == 0x11 && len >= 10)
+        diag::slot_counter(static_cast<size_t>(slot), report[9] >> 2, 6);
+    else if (d->controller_type == CONTROLLER_TYPE_PS5Controller && report[0] == 0x31 && len >= 9)
+        diag::slot_counter(static_cast<size_t>(slot), report[8], 8);
+}
+
+extern "C" void uni_diag_on_device_information(const uint8_t* packet, uint16_t size)
+{
+    (void)size;
+    switch (hci_event_gattservice_meta_get_subevent_code(packet)) {
+        case GATTSERVICE_SUBEVENT_DEVICE_INFORMATION_MANUFACTURER_NAME:
+            if (gattservice_subevent_device_information_manufacturer_name_get_att_status(packet) == 0)
+                diag::device_information(gattservice_subevent_device_information_manufacturer_name_get_con_handle(packet),
+                                         "manufacturer", gattservice_subevent_device_information_manufacturer_name_get_value(packet));
+            break;
+        case GATTSERVICE_SUBEVENT_DEVICE_INFORMATION_MODEL_NUMBER:
+            if (gattservice_subevent_device_information_model_number_get_att_status(packet) == 0)
+                diag::device_information(gattservice_subevent_device_information_model_number_get_con_handle(packet),
+                                         "model", gattservice_subevent_device_information_model_number_get_value(packet));
+            break;
+        case GATTSERVICE_SUBEVENT_DEVICE_INFORMATION_FIRMWARE_REVISION:
+            if (gattservice_subevent_device_information_firmware_revision_get_att_status(packet) == 0)
+                diag::device_information(gattservice_subevent_device_information_firmware_revision_get_con_handle(packet),
+                                         "firmware", gattservice_subevent_device_information_firmware_revision_get_value(packet));
+            break;
+        case GATTSERVICE_SUBEVENT_DEVICE_INFORMATION_HARDWARE_REVISION:
+            if (gattservice_subevent_device_information_hardware_revision_get_att_status(packet) == 0)
+                diag::device_information(gattservice_subevent_device_information_hardware_revision_get_con_handle(packet),
+                                         "hardware", gattservice_subevent_device_information_hardware_revision_get_value(packet));
+            break;
+        case GATTSERVICE_SUBEVENT_DEVICE_INFORMATION_SOFTWARE_REVISION:
+            if (gattservice_subevent_device_information_software_revision_get_att_status(packet) == 0)
+                diag::device_information(gattservice_subevent_device_information_software_revision_get_con_handle(packet),
+                                         "software", gattservice_subevent_device_information_software_revision_get_value(packet));
+            break;
+        case GATTSERVICE_SUBEVENT_DEVICE_INFORMATION_PNP_ID:
+            if (gattservice_subevent_device_information_pnp_id_get_att_status(packet) == 0)
+                diag::pnp_id(gattservice_subevent_device_information_pnp_id_get_con_handle(packet),
+                             gattservice_subevent_device_information_pnp_id_get_vendor_source_id(packet),
+                             gattservice_subevent_device_information_pnp_id_get_vendor_id(packet),
+                             gattservice_subevent_device_information_pnp_id_get_product_id(packet),
+                             gattservice_subevent_device_information_pnp_id_get_product_version(packet));
+            break;
+        default:
+            break;
+    }
+}
+
+namespace bluepad32 {
+
 void init(Gamepad(&gamepads)[MAX_GAMEPADS])
 {
     for (uint8_t i = 0; i < MAX_GAMEPADS; ++i)
@@ -1333,6 +1832,10 @@ void init(Gamepad(&gamepads)[MAX_GAMEPADS])
 
     uni_platform_set_custom(get_driver());
     uni_init(0, nullptr);
+    s_diag_hci_cb.callback = &diag_hci_handler;
+    hci_add_event_handler(&s_diag_hci_cb);
+    /* Which half of a merged Joy-Con pair provides motion. */
+    uni_hid_parser_switch_set_pair_imu_side(joycon_settings::get().pair_imu_right);
 
     led_timer_set_ = true;
     led_timer_.process = check_led_cb;
@@ -1374,6 +1877,8 @@ void run_task(Gamepad(&gamepads)[MAX_GAMEPADS])
         uni_bt_enable_new_connections_safe(false);
         OGXM_LOG("BT: applied deferred USB quiet (pad was plugged during BT bring-up)\n");
     }
+    /* The lost alarm wake-up (#146) is fixed in the Pico SDK by the timer patches
+     * (Firmware/cmake/patch_libs.cmake), so the run loop sleeps until its next timer again. */
     btstack_run_loop_execute();
 }
 

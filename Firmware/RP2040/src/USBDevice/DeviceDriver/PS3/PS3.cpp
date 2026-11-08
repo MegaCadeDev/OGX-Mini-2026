@@ -2,6 +2,7 @@
 #include <algorithm>
 
 #include "pico/time.h"
+#include "Board/ogxm_log.h"
 #include "Gamepad/MotionImu.h"
 #include "USBDevice/DeviceDriver/PS3/PS3.h"
 
@@ -283,6 +284,7 @@ void PS3Device::process(const uint8_t idx, Gamepad& gamepad)
         const uint8_t rm = report_out_.rumble.right_motor_on;
         gp_out.rumble_r = (rm == 1u) ? Range::MAX<uint8_t> : 0;
         gamepad.set_pad_out(gp_out);
+        OGXM_LOG("PS3: rumble l=%u r=%u\n", (unsigned)gp_out.rumble_l, (unsigned)gp_out.rumble_r);
         new_report_out_ = false;
     }
 }
@@ -349,6 +351,8 @@ void PS3Device::set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t 
     } 
     else if (report_type == HID_REPORT_TYPE_OUTPUT) 
     {
+        OGXM_LOG("PS3: set_report output id=0x%02x len=%u\n", (unsigned)report_id, (unsigned)bufsize);
+        OGXM_LOG_HEX(buffer, bufsize < 12 ? bufsize : 12);
         // DS3 command
         uint8_t const *buf = buffer;
         if (report_id == 0 && bufsize > 0) 
@@ -360,9 +364,25 @@ void PS3Device::set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t 
         switch(report_id) 
         {
             case PS3::ReportID::FEATURE_01:
+            {
+                /* Linux hid-sony sends report 0x01 by SET_REPORT without the report ID
+                 * byte (HID_QUIRK_SKIP_OUTPUT_REPORT_ID), so the data starts with the padding
+                 * byte, which it sets to 0x01. TinyUSB takes that 0x01 for the report ID and
+                 * strips it, so the report arrives one byte short and the rumble fields were
+                 * read one byte off (rumble never worked on Linux). Put it back. */
+                constexpr uint16_t REPORT_LEN_NO_ID = 35;  // hid-sony sixaxis_output_report - ID
+                uint8_t* out = reinterpret_cast<uint8_t*>(&report_out_);
+                uint16_t max_len = sizeof(PS3::OutReport);
+                if (bufsize == REPORT_LEN_NO_ID - 1)
+                {
+                    out[0] = 0x01;
+                    out++;
+                    max_len--;
+                }
                 new_report_out_ = true;
-                std::memcpy(&report_out_, buf, std::min(bufsize, static_cast<uint16_t>(sizeof(PS3::OutReport))));
+                std::memcpy(out, buf, std::min(bufsize, max_len));
                 break;
+            }
         }
     }
 }

@@ -37,7 +37,7 @@ Unofficial clones, random AliExpress spin-offs, or homebrew PCBs that only “lo
 2. Open a GitHub issue only after reading **[Support issue requirements](Firmware/RP2040/docs/Support_Issue_Requirements.md)** and including **every** required field. Incomplete reports **may be closed or delayed**.
 3. Out-of-scope **boards:** clone → fix → pull request. Out-of-scope **controllers:** arrange donation or shipment first — otherwise the request will be closed as out of scope.
 
-[**Visit the web app here**](https://megacadedev.github.io/OGX-Mini-2026-WebApp/) to change your mappings and deadzone settings. To pair the OGX-Mini with the web app via USB, plug your controller in, then connect it to your PC, hold **Start + Left Bumper + Right Bumper** to enter web app mode. Click "Connect via USB" in the web app and select the OGX-Mini. You can also pair via Bluetooth, no extra steps are needed in that case. 
+[**Visit the web app here**](https://megacadedev.github.io/OGX-Mini-2026-WebApp/) to change your mappings and deadzone settings. To pair the OGX-Mini with the web app via USB, plug your controller in, then connect it to your PC, hold **Start + Left Bumper + Right Bumper** to enter web app mode. Click "Connect via USB" in the web app and select the OGX-Mini. You can also pair via Bluetooth, no extra steps are needed in that case. The web app also shows each controller's link health and saves a diagnostics report to attach to support issues: see the [Web app guide](Firmware/RP2040/docs/Web_App_Guide.md). 
 
 [**Join the discord here!**](https://discord.gg/HhZuSaSc4)
 
@@ -97,6 +97,8 @@ Start = Plus (Switch) = Options (Dualsense/DS4)
 - PlayStation 4 motion (DualShock 4 USB gadget for auth dongles — **not** licensed PS4 console output)
     - Start + Left Bumper + D-pad **Left**
     - Made so **motion controls** work through an **authentication dongle** (e.g. Brook Wingman). This firmware does **not** perform PS4 authentication; plug OGX into a licensed dongle, then the dongle into the PS4.
+- DInput
+    - Start + Right Bumper + Dpad Left
 - SteamOS / Bazzite (DualSense USB + touchpad mouse)
     - Start + Left Bumper + D-pad **Up**
 - PlayStation Classic
@@ -106,7 +108,7 @@ Start = Plus (Switch) = Options (Dualsense/DS4)
 - Dreamcast (GPIO output)
     - Start + Y — **Pico W / Pico 2 W + controller cable**; Bluetooth input only (USB-A host out of scope)
 - Wii U (GameCube Adapter)
-      - Start + Left Bumper + D-Pad Down
+    - Start + Left Bumper + D-Pad Down
 - Web Application Mode
     - Start + Left Bumper + Right Bumper
 
@@ -248,7 +250,7 @@ Highlights:
 
 - **Two adapters on other consoles** — **Not supported yet** as two independent players: units share the same USB identity (VID/PID / serial). Use **one OGX + a native or other-brand pad**, or a **multi-port** host. See [IMPROVEMENTS — Summary](Firmware/RP2040/docs/IMPROVEMENTS.md#summary).
 
-- **PS3 / PS4 motion (tilt / IMU passthrough)** — **PS3** and **PS4** modes forward accelerometer (and gyro where available) from **DualShock 4**, **DualSense**, **Switch Pro**, and **Wii Remote** (BT/USB where supported). **PS4 mode is for motion on authentication dongles** (DualShock 4 USB gadget profile); it is **not** native/licensed PS4 console output — PS4 auth is **not supported directly** by this firmware. **Switch** output does not pass through motion for now. For **real PS3/PS4 consoles**, use a **licensed USB authentication dongle** between OGX-Mini and the console — **tested with [Brook Wingman XE 2 Converter](https://www.brookaccessories.com/products/wingman-xe2)** (works on **PS3** and **PS4**). Details: [PS3 / PS4 motion controls](Firmware/RP2040/docs/PS3_PS4_Motion_Controls.md), [IMPROVEMENTS.md — motion passthrough](Firmware/RP2040/docs/IMPROVEMENTS.md#ps3--ps4-output--motion-passthrough).
+- **PS3 / PS4 motion (tilt / IMU passthrough)** — **PS3** and **PS4** modes forward accelerometer (and gyro where available) from **DualShock 4**, **DualSense**, **Switch Pro**, and **Wii Remote** (BT/USB where supported). **PS4 mode is for motion on authentication dongles** (DualShock 4 USB gadget profile); it is **not** native/licensed PS4 console output — PS4 auth is **not supported directly** by this firmware. **Switch Pro** output also passes motion through (Joy-Cons, single or merged pair, DS4, DualSense, Switch Pro), once the host enables the IMU ([IMPROVEMENTS.md — Switch Pro motion](Firmware/RP2040/docs/IMPROVEMENTS.md#switch-pro-output--motion)). For **real PS3/PS4 consoles**, use a **licensed USB authentication dongle** between OGX-Mini and the console — **tested with [Brook Wingman XE 2 Converter](https://www.brookaccessories.com/products/wingman-xe2)** (works on **PS3** and **PS4**). Details: [PS3 / PS4 motion controls](Firmware/RP2040/docs/PS3_PS4_Motion_Controls.md), [IMPROVEMENTS.md — motion passthrough](Firmware/RP2040/docs/IMPROVEMENTS.md#ps3--ps4-output--motion-passthrough).
 
 - **SteamOS / Bazzite (STEAM output mode)** — **Start + Left Bumper + D-pad Up** (~3 s), **web app**, or `-DOGXM_FIXED_DRIVER=STEAM` / build-script fixed mode. USB enumerates as **Sony DualSense** (`054c:0ce6`) **plus** a separate **HID mouse** interface. **DualSense emulation:** passthrough of the real PS5 report when input is DualSense (BT or wired USB); other controllers get a **synthesized** DualSense report (Cross/Circle/Square/Triangle, L1/R2, Share/Options, PS). **Touchpad → mouse:** DualSense touchpad drag moves the desktop cursor; tap = left click. Controllers without a touchpad are gamepad-only. Works with **Bluetooth** (Pico W / Pico 2 W) or **wired USB** input. Details: [SteamOS / Bazzite output mode](Firmware/RP2040/docs/SteamOS_Bazzite_Output_Mode.md), [IMPROVEMENTS.md — STEAM mode](Firmware/RP2040/docs/IMPROVEMENTS.md#steam-mode--steamos--bazzite-linux-desktop), [Controller_Mappings.md — STEAM](Firmware/RP2040/docs/Controller_Mappings.md#steamos--bazzite-steam-mode).
 

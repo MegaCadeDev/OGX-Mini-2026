@@ -26,6 +26,7 @@ private:
 	std::array<uint8_t, SteamPassthrough::USB_REPORT_SIZE> report_in_{};
 	PS5::OutReport report_out_{};
 	bool new_report_out_{false};
+	uint8_t seq_{0};
 	uint8_t device_descriptor_[18]{};
 };
 

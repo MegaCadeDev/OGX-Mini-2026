@@ -252,7 +252,7 @@ gamepad->set_pad_in_from_bluetooth(gp_in)
 | Button combos (~3 s) | `UserSettings.cpp` — `BUTTON_COMBO_MAP` / `VALID_DRIVER_TYPES` |
 | Web app profiles | Remap `MAP_*` fields on `Gamepad` |
 | Fixed builds | `-DOGXM_FIXED_DRIVER=…` (optional combos via CMake) |
-| Flash writes | Prefer Core0; Pico W Core1 uses `flash_safe_execute` when needed |
+| Flash writes | `NVSTool` runs every erase / program safely: `flash_safe_execute` parks the other core when it is registered for lockout (Pico W Core1, Core0), otherwise interrupts are disabled; after `usb::disconnect_all()` (other core reset) it writes directly. Do not wrap NVSTool calls in another `flash_safe_execute` (it would nest) |
 
 Changing mode typically: detect combo → store type → disconnect → reboot.
 

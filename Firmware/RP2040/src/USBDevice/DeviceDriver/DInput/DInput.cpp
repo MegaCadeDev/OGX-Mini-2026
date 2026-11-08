@@ -87,6 +87,10 @@ void DInputDevice::process(const uint8_t idx, Gamepad& gamepad)
         if (gp_in.buttons & Gamepad::BUTTON_Y)   in_report.buttons[0] |= DInput::Buttons0::TRIANGLE;
         if (gp_in.buttons & Gamepad::BUTTON_LB)  in_report.buttons[0] |= DInput::Buttons0::L1;
         if (gp_in.buttons & Gamepad::BUTTON_RB)  in_report.buttons[0] |= DInput::Buttons0::R1;
+        /* The descriptor's L2 / R2 buttons follow the triggers, as in PS3 mode. Only the pressure
+         * bytes carried them, which hosts do not show: ZL / ZR did nothing on a PC. */
+        if (gp_in.trigger_l) in_report.buttons[0] |= DInput::Buttons0::L2;
+        if (gp_in.trigger_r) in_report.buttons[0] |= DInput::Buttons0::R2;
 
         if (gp_in.buttons & Gamepad::BUTTON_L3)    in_report.buttons[1] |= DInput::Buttons1::L3;
         if (gp_in.buttons & Gamepad::BUTTON_R3)    in_report.buttons[1] |= DInput::Buttons1::R3;
@@ -103,9 +107,11 @@ void DInputDevice::process(const uint8_t idx, Gamepad& gamepad)
             in_report.left_axis  = gp_in.analog[Gamepad::ANALOG_OFF_LEFT];
 
             in_report.triangle_axis = gp_in.analog[Gamepad::ANALOG_OFF_Y];
-            in_report.circle_axis   = gp_in.analog[Gamepad::ANALOG_OFF_X];
-            in_report.cross_axis    = gp_in.analog[Gamepad::ANALOG_OFF_B];
-            in_report.square_axis   = gp_in.analog[Gamepad::ANALOG_OFF_A];
+            /* Pressure follows the digital bits above (A = cross, B = circle, X = square), like
+             * PS3Device; these three were rotated one position. */
+            in_report.circle_axis   = gp_in.analog[Gamepad::ANALOG_OFF_B];
+            in_report.cross_axis    = gp_in.analog[Gamepad::ANALOG_OFF_A];
+            in_report.square_axis   = gp_in.analog[Gamepad::ANALOG_OFF_X];
 
             in_report.r1_axis = gp_in.analog[Gamepad::ANALOG_OFF_RB];
             in_report.l1_axis = gp_in.analog[Gamepad::ANALOG_OFF_LB];

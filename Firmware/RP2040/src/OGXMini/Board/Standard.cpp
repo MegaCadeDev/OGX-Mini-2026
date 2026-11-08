@@ -1,6 +1,6 @@
 #include "Board/Config.h"
 #include "OGXMini/Board/Standard.h"
-#if ((OGXM_BOARD == PI_PICO) || (OGXM_BOARD == RP2040_ZERO) || (OGXM_BOARD == ADAFRUIT_FEATHER) || (OGXM_BOARD == RP2350_USB_A) || (OGXM_BOARD == RP2350_ZERO) || (OGXM_BOARD == RP2040_XIAO))
+#if ((OGXM_BOARD == PI_PICO) || (OGXM_BOARD == RP2040_ZERO) || (OGXM_BOARD == ADAFRUIT_FEATHER) || (OGXM_BOARD == RP2350_USB_A) || (OGXM_BOARD == RP2350_ZERO) || (OGXM_BOARD == RP2040_XIAO) || (OGXM_BOARD == OGX_LIVE))
 
 #include <pico/multicore.h>
 #include <pico/time.h>
@@ -21,6 +21,7 @@
 #include "TaskQueue/TaskQueue.h"
 #include "Gamepad/Gamepad.h"
 #include "UserSettings/UserSettings.h"
+#include "Diagnostics/DiagnosticsBoard.h"
 #include "Board/board_api.h"
 #include "Board/board_api_private/board_api_private.h"
 #include "Board/ogxm_log.h"
@@ -104,9 +105,17 @@ void stop_pio_usb_host() {
     enable_host_line_irq_monitoring();
 }
 
+bool sof_timer_active() {
+    return s_pio_usb_sof_hw_timer;
+}
+
 } // namespace board_api_usbh
 
 void core1_task() {
+    /* Let Core0 park this core while it writes flash (UserSettings/NVSTool.h). Without it, a
+     * settings write ran with only Core0's interrupts off while this core kept executing from
+     * flash, which could hang it. */
+    multicore_lockout_victim_init();
     HostManager& host_manager = HostManager::get_instance();
     host_manager.initialize(_gamepads);
 
@@ -197,6 +206,7 @@ void standard::host_mounted(bool host_mounted) {
 }
 
 void standard::initialize() {
+    diag::set_latency_gamepad(&_gamepads[0]);  // input-to-use latency in the diagnostics
     board_api::init_board();
 
     UserSettings& user_settings = UserSettings::get_instance();
