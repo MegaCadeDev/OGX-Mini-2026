@@ -113,7 +113,7 @@ static void std_sleep_ms(uint32_t ms)
                 std::chrono::high_resolution_clock::now() - start).count() < ms) 
     {
 #if defined(CONFIG_EN_USB_HOST)
-        pio_usb_host_frame();
+        board_api::usb::service_host_frame();
 #endif
         tuh_task();
     }
@@ -131,7 +131,7 @@ static void wait_for_tx_complete(uint8_t dev_addr, uint8_t ep_addr, uint32_t tim
             return;
         }
 #if defined(CONFIG_EN_USB_HOST)
-        pio_usb_host_frame();
+        board_api::usb::service_host_frame();
 #endif
         tuh_task();
     }
@@ -144,7 +144,7 @@ static void service_usb_host_frames(uint8_t frames = 4)
 {
     for (uint8_t i = 0; i < frames; ++i)
     {
-        pio_usb_host_frame();
+        board_api::usb::service_host_frame();
         tuh_task();
     }
 }
