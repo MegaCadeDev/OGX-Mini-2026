@@ -568,8 +568,10 @@ public:
 						ps4_composite_keepalive = true;
 					}
 				}
+				const bool xbox360w_periodic = iface.host_driver_type == HostDriverType::XBOX360W;
 				if (!(iface.gamepad->new_pad_out() || iface.gamepad->has_rumble() || ps4_hid_periodic ||
-				      ps3_hid_periodic || switch_pro_hid_periodic || ps4_composite_keepalive))
+				      ps3_hid_periodic || switch_pro_hid_periodic || ps4_composite_keepalive ||
+				      xbox360w_periodic))
 				{
 					continue;
 				}
