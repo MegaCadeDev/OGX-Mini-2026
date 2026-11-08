@@ -156,6 +156,10 @@ void stop_pio_usb_host() {
     enable_host_line_irq_monitoring();
 }
 
+bool sof_timer_active() {
+    return s_pico_w_usb_sof_hw_timer;
+}
+
 } // namespace board_api_usbh
 
 /**

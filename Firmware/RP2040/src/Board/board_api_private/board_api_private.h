@@ -32,6 +32,9 @@ namespace board_api_usbh {
     void enable_host_line_irq_monitoring();
     /** Stop PIO USB host (SOF timer, tuh_deinit) before core reset / reboot. Standard boards. */
     void stop_pio_usb_host() __attribute__((weak));
+    /** True when a hardware repeating_timer is already calling pio_usb_host_frame() at 1 kHz.
+     *  Manual callers must skip their own call to avoid reentrancy. */
+    bool sof_timer_active() __attribute__((weak));
 }
 
 #endif // BOARD_API_PRIVATE_H
