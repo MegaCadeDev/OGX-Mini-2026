@@ -272,4 +272,13 @@ function(apply_lib_patches EXTERNAL_DIR)
         endif ()
     endforeach ()
 
+    # GCC 15 (the host compiler on ubuntu-latest since it moved to Ubuntu 26.04) no longer pulls
+    # <cstdint> in through the standard headers, so the SDK's pioasm, built for the host, failed
+    # to compile ('uint8_t' does not name a type) on every board. Backport of
+    # raspberrypi/pico-sdk#2468 (SDK 2.2.0).
+    if (EXISTS "${PICO_SDK_PATH_LOCAL}/tools/pioasm/pio_types.h")
+        ogxm_apply_patch_series("Pico SDK pioasm GCC 15" "${PICO_SDK_PATH_LOCAL}"
+            "${EXTERNAL_DIR}/patches/pico_sdk_pioasm_gcc15.diff")
+    endif ()
+
 endfunction()
