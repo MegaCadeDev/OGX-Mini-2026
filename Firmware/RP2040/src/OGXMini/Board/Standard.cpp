@@ -32,6 +32,7 @@ Gamepad _gamepads[MAX_GAMEPADS];
 
 static repeating_timer_t s_pio_usb_sof_timer;
 static bool s_pio_usb_sof_hw_timer = false;
+static alarm_pool_t* s_pio_usb_sof_pool = nullptr;
 /** Set during intentional mode-change reboot so host_mounted(false) does not queue a second teardown. */
 static std::atomic<bool> s_driver_reboot_pending{false};
 /** Debounce transient PIO USB umount before tearing down the USB device stack. */
@@ -44,6 +45,7 @@ static void pio_usb_sof_timer_stop() {
     }
     cancel_repeating_timer(&s_pio_usb_sof_timer);
     s_pio_usb_sof_hw_timer = false;
+    board_api::usb::set_host_frame_timer_active(false);
 }
 
 static bool pio_usb_sof_timer_cb(repeating_timer_t* rt) {
@@ -56,8 +58,12 @@ static void pio_usb_sof_timer_start() {
     if (s_pio_usb_sof_hw_timer) {
         return;
     }
-    if (add_repeating_timer_us(-1000, pio_usb_sof_timer_cb, nullptr, &s_pio_usb_sof_timer)) {
+    const bool started = s_pio_usb_sof_pool
+        ? alarm_pool_add_repeating_timer_us(s_pio_usb_sof_pool, -1000, pio_usb_sof_timer_cb, nullptr, &s_pio_usb_sof_timer)
+        : add_repeating_timer_us(-1000, pio_usb_sof_timer_cb, nullptr, &s_pio_usb_sof_timer);
+    if (started) {
         s_pio_usb_sof_hw_timer = true;
+        board_api::usb::set_host_frame_timer_active(true);
     }
 }
 
@@ -121,6 +127,7 @@ void core1_task() {
         sleep_ms(100);
     }
 
+    s_pio_usb_sof_pool = alarm_pool_create(2, 4);
     configure_pio_usb_host();
     board_api_usbh::suspend_line_irq();
     tuh_init(BOARD_TUH_RHPORT);

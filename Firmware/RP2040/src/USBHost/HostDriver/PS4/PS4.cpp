@@ -7,6 +7,7 @@
 #include "Board/Config.h"
 #if defined(CONFIG_EN_USB_HOST)
 #include "pio_usb.h"
+#include "Board/board_api.h"
 #endif
 
 #include "USBHost/HostDriver/PS4/PS4.h"
@@ -29,7 +30,7 @@ void PS4Host::initialize(Gamepad& gamepad, uint8_t address, uint8_t instance, co
     while (!tuh_hid_send_report(address, instance, 0, reinterpret_cast<const uint8_t*>(&out_report_), sizeof(PS4::OutReport)))
     {
 #if defined(CONFIG_EN_USB_HOST)
-        pio_usb_host_frame();
+        board_api::usb::service_host_frame();
 #endif
         tuh_task();
         if (++attempts > 4000u)

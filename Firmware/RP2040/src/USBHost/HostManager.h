@@ -581,7 +581,7 @@ public:
 				tuh_task();
 #if defined(CONFIG_EN_USB_HOST)
 				/* Nested tuh_task during OUT must not starve PIO USB SOF or wired IN dies in ~1–2 s. */
-				pio_usb_host_frame();
+				board_api::usb::service_host_frame();
 #endif
 			}
 		}
