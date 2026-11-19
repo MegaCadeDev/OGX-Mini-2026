@@ -21,7 +21,7 @@ jobs:
   # Rules learnt from bugs that only showed on hardware (.github/scripts/check_firmware_rules.py).
   rules:
     name: Firmware rules
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -32,7 +32,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.board }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Each step below retries on its own (up to 5 attempts, each with a time limit), so a
     # hung download or build is retried instead of losing that board's UF2. A normal run
     # takes 3-5 minutes; this only bounds the worst case.
@@ -159,7 +159,7 @@ jobs:
     name: Publish GitHub Release
     needs: build
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/develop')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout (for version file)
