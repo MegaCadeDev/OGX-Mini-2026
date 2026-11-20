@@ -394,6 +394,32 @@ if(EN_USB_HOST)
     )
 endif()
 
+set(OGXM_XBOX_DONGLE_FW "" CACHE FILEPATH "Xbox Wireless Adapter (045E:02FE) radio firmware FW_ACC_00U.bin; enables the dongle host driver for a personal build")
+if(EN_USB_HOST AND OGXM_XBOX_DONGLE_FW)
+    set(XBOX_DONGLE_BOARDS PI_PICO PI_PICO2 RP2040_ZERO ADAFRUIT_FEATHER RP2350_USB_A RP2350_ZERO RP2040_XIAO OGX_LIVE)
+    if(NOT OGXM_BOARD IN_LIST XBOX_DONGLE_BOARDS)
+        message(FATAL_ERROR "OGXM_XBOX_DONGLE_FW is only supported on boards that use the Standard host loop: ${XBOX_DONGLE_BOARDS}")
+    endif()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(XBOX_DONGLE_FW_C ${CMAKE_BINARY_DIR}/xbox_dongle_fw.c)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_LIST_DIR}/tools/xbox_dongle_fw_blob.py ${OGXM_XBOX_DONGLE_FW} ${XBOX_DONGLE_FW_C}
+        RESULT_VARIABLE XBOX_DONGLE_FW_RESULT
+    )
+    if(NOT XBOX_DONGLE_FW_RESULT EQUAL 0)
+        message(FATAL_ERROR "Xbox Wireless Adapter firmware conversion failed")
+    endif()
+    list(APPEND SOURCES_BOARD
+        ${SRC}/USBHost/HostDriver/XboxDongle/mt76.c
+        ${SRC}/USBHost/HostDriver/XboxDongle/dongle_core.c
+        ${SRC}/USBHost/HostDriver/XboxDongle/tuh_xbox_dongle.cpp
+        ${SRC}/USBHost/HostDriver/XboxDongle/XboxDongleHost.cpp
+        ${XBOX_DONGLE_FW_C}
+    )
+    add_compile_definitions(CONFIG_OGXM_XBOX_DONGLE=1)
+    message(STATUS "Xbox Wireless Adapter host driver enabled.")
+endif()
+
 if(EN_BLUETOOTH)
     add_compile_definitions(CONFIG_EN_BLUETOOTH=1)
     message(STATUS "Bluetooth enabled.")

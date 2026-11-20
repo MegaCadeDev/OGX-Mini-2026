@@ -12,6 +12,7 @@
 
 #if defined(CONFIG_EN_USB_HOST)
 #include "pio_usb.h"
+#include "Board/board_api.h"
 #endif
 
 namespace {
@@ -35,7 +36,7 @@ constexpr uint8_t kGetInfoMaxAttempts = 8;
 #if defined(CONFIG_EN_USB_HOST)
 void service_usb_host()
 {
-    pio_usb_host_frame();
+    board_api::usb::service_host_frame();
     tuh_task();
 }
 #else

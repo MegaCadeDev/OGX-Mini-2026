@@ -4,6 +4,7 @@
 
 #include <pico/multicore.h>
 #include <pico/time.h>
+#include <hardware/gpio.h>
 #include <atomic>
 
 #include "tusb.h"
@@ -11,6 +12,9 @@
 #include "pio_usb.h"
 
 #include "USBHost/HostManager.h"
+#if defined(CONFIG_OGXM_XBOX_DONGLE)
+#include "USBHost/HostDriver/XboxDongle/tuh_xbox_dongle.h"
+#endif
 #include "USBHost/GPIOHost/GPIOHost.h"
 #include "USBDevice/DeviceManager.h"
 #include "USBDevice/DeviceDriver/DeviceDriverTypes.h"
@@ -32,11 +36,14 @@ Gamepad _gamepads[MAX_GAMEPADS];
 
 static repeating_timer_t s_pio_usb_sof_timer;
 static bool s_pio_usb_sof_hw_timer = false;
+static alarm_pool_t* s_pio_usb_sof_pool = nullptr;
 /** Set during intentional mode-change reboot so host_mounted(false) does not queue a second teardown. */
 static std::atomic<bool> s_driver_reboot_pending{false};
 /** Debounce transient PIO USB umount before tearing down the USB device stack. */
 static std::atomic<bool> s_host_teardown_scheduled{false};
 constexpr uint32_t HOST_UNMOUNT_DEBOUNCE_MS = 1500;
+constexpr int64_t HOST_LINE_STABLE_US = 40 * 1000;
+constexpr int64_t HOST_MOUNT_TIMEOUT_US = 2500 * 1000;
 
 static void pio_usb_sof_timer_stop() {
     if (!s_pio_usb_sof_hw_timer) {
@@ -44,6 +51,7 @@ static void pio_usb_sof_timer_stop() {
     }
     cancel_repeating_timer(&s_pio_usb_sof_timer);
     s_pio_usb_sof_hw_timer = false;
+    board_api::usb::set_host_frame_timer_active(false);
 }
 
 static bool pio_usb_sof_timer_cb(repeating_timer_t* rt) {
@@ -56,8 +64,12 @@ static void pio_usb_sof_timer_start() {
     if (s_pio_usb_sof_hw_timer) {
         return;
     }
-    if (add_repeating_timer_us(-1000, pio_usb_sof_timer_cb, nullptr, &s_pio_usb_sof_timer)) {
+    const bool started = s_pio_usb_sof_pool
+        ? alarm_pool_add_repeating_timer_us(s_pio_usb_sof_pool, -1000, pio_usb_sof_timer_cb, nullptr, &s_pio_usb_sof_timer)
+        : add_repeating_timer_us(-1000, pio_usb_sof_timer_cb, nullptr, &s_pio_usb_sof_timer);
+    if (started) {
         s_pio_usb_sof_hw_timer = true;
+        board_api::usb::set_host_frame_timer_active(true);
     }
 }
 
@@ -91,6 +103,59 @@ static void pio_usb_host_loop_tick() {
     tuh_task();
 }
 
+static bool host_line_high() {
+    return (gpio_get(PIO_USB_DP_PIN) != 0) || (gpio_get(PIO_USB_DP_PIN + 1) != 0);
+}
+
+static void wait_for_stable_host_line() {
+    absolute_time_t high_since = nil_time;
+    while (true) {
+        if (!host_line_high()) {
+            high_since = nil_time;
+            sleep_ms(10);
+            continue;
+        }
+        if (is_nil_time(high_since)) {
+            high_since = get_absolute_time();
+        }
+        if (absolute_time_diff_us(high_since, get_absolute_time()) >= HOST_LINE_STABLE_US) {
+            return;
+        }
+        sleep_ms(5);
+    }
+}
+
+static bool tuh_any_device_mounted() {
+    const uint8_t addr_max = static_cast<uint8_t>(CFG_TUH_DEVICE_MAX + CFG_TUH_HUB);
+    for (uint8_t d = 1; d <= addr_max; ++d) {
+        if (tuh_mounted(d)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void start_pio_usb_host() {
+    wait_for_stable_host_line();
+    configure_pio_usb_host();
+    board_api_usbh::suspend_line_irq();
+    tuh_init(BOARD_TUH_RHPORT);
+    pio_usb_sof_timer_start();
+}
+
+static void restart_pio_usb_host() {
+    OGXM_LOG("No USB host device mounted in time, restarting PIO USB host.\n");
+    pio_usb_sof_timer_stop();
+    (void)tuh_deinit(BOARD_TUH_RHPORT);
+    for (int i = 0; i < 20; ++i) {
+        tuh_task();
+        sleep_ms(1);
+    }
+    board_api_usbh::enable_host_line_irq_monitoring();
+    sleep_ms(50);
+    start_pio_usb_host();
+}
+
 namespace board_api_usbh {
 
 void stop_pio_usb_host() {
@@ -115,16 +180,10 @@ void core1_task() {
     HostManager& host_manager = HostManager::get_instance();
     host_manager.initialize(_gamepads);
 
-    //Pico-PIO-USB will not reliably detect a hot plug on some boards,
-    //monitor and init host stack after connection
-    while(!board_api::usb::host_connected()) {
-        sleep_ms(100);
-    }
-
-    configure_pio_usb_host();
-    board_api_usbh::suspend_line_irq();
-    tuh_init(BOARD_TUH_RHPORT);
-    pio_usb_sof_timer_start();
+    s_pio_usb_sof_pool = alarm_pool_create(2, 4);
+    start_pio_usb_host();
+    absolute_time_t host_started = get_absolute_time();
+    bool host_ever_mounted = false;
 
     uint32_t tid_feedback = TaskQueue::Core1::get_new_task_id();
     TaskQueue::Core1::queue_delayed_task(tid_feedback, FEEDBACK_DELAY_MS, true,
@@ -136,6 +195,18 @@ void core1_task() {
         pio_usb_sof_service_due_frames();
         TaskQueue::Core1::process_tasks();
         tuh_task();
+#if defined(CONFIG_OGXM_XBOX_DONGLE)
+        tuh_xbox_dongle::task();
+#endif
+        if (host_ever_mounted) {
+            continue;
+        }
+        if (tuh_any_device_mounted()) {
+            host_ever_mounted = true;
+        } else if (absolute_time_diff_us(host_started, get_absolute_time()) >= HOST_MOUNT_TIMEOUT_US) {
+            restart_pio_usb_host();
+            host_started = get_absolute_time();
+        }
     }
 }
 
@@ -218,20 +289,15 @@ void standard::initialize() {
 void standard::run() {
     DeviceDriverType current_driver = UserSettings::get_instance().get_current_driver();
     const bool gpio_device_mode = (current_driver == DeviceDriverType::PS1PS2 || current_driver == DeviceDriverType::GAMECUBE || current_driver == DeviceDriverType::DREAMCAST);
+    absolute_time_t gpio_host_started = nil_time;
+    bool gpio_host_ever_mounted = false;
 
     if (gpio_device_mode) {
         HostManager& host_manager = HostManager::get_instance();
         host_manager.initialize(_gamepads);
 
-        while (!board_api::usb::host_connected()) {
-            TaskQueue::Core0::process_tasks();
-            sleep_ms(100);
-        }
-
-        configure_pio_usb_host();
-        board_api_usbh::suspend_line_irq();
-        tuh_init(BOARD_TUH_RHPORT);
-        pio_usb_sof_timer_start();
+        start_pio_usb_host();
+        gpio_host_started = get_absolute_time();
 
         uint32_t tid_feedback = TaskQueue::Core0::get_new_task_id();
         TaskQueue::Core0::queue_delayed_task(tid_feedback, FEEDBACK_DELAY_MS, true, [&host_manager]() {
@@ -299,6 +365,14 @@ void standard::run() {
         TaskQueue::Core0::process_tasks();
         if (gpio_device_mode) {
             pio_usb_host_loop_tick();
+            if (!gpio_host_ever_mounted) {
+                if (tuh_any_device_mounted()) {
+                    gpio_host_ever_mounted = true;
+                } else if (absolute_time_diff_us(gpio_host_started, get_absolute_time()) >= HOST_MOUNT_TIMEOUT_US) {
+                    restart_pio_usb_host();
+                    gpio_host_started = get_absolute_time();
+                }
+            }
             tud_task();
             HostInputSource input_src = UserSettings::get_instance().get_input_source();
             if (input_src == HostInputSource::PSX_GPIO) {
