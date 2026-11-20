@@ -38,6 +38,9 @@
 #include "USBHost/HostDriver/XInput/Xbox360.h"
 #include "USBHost/HostDriver/XInput/Xbox360W.h"
 #include "USBHost/HostDriver/XInput/XboxOG.h"
+#if defined(CONFIG_OGXM_XBOX_DONGLE)
+#include "USBHost/HostDriver/XboxDongle/XboxDongleHost.h"
+#endif
 #include "USBHost/HostDriver/N64/N64.h"
 #include "USBHost/HostDriver/HIDGeneric/HIDGeneric.h"
 #include "USBHost/HostDriver/VictrixGambit/VictrixGambit.h"
@@ -178,6 +181,7 @@ public:
 				case HostDriverType::VICTRIX_GAMBIT: type_name = "VICTRIX_GAMBIT"; break;
 				case HostDriverType::XBOX360: type_name = "XBOX360"; break;
 				case HostDriverType::XBOXONE: type_name = "XBOXONE"; break;
+				case HostDriverType::XBOX_DONGLE: type_name = "XBOX_DONGLE"; break;
 				case HostDriverType::XBOX360W: type_name = "XBOX360W"; break;
 				case HostDriverType::DINPUT: type_name = "DINPUT"; break;
 				case HostDriverType::PS4: type_name = "PS4"; break;
@@ -281,6 +285,11 @@ public:
 				debug_printf("XBOXONE Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<XboxOneHost>(gp_idx);
 				break;
+#if defined(CONFIG_OGXM_XBOX_DONGLE)
+			case HostDriverType::XBOX_DONGLE:
+				interface.driver = std::make_unique<XboxDongleHost>(gp_idx);
+				break;
+#endif
 			case HostDriverType::VICTRIX_GAMBIT:
 				debug_printf("VICTRIX GAMBIT Loaded\n"); fflush(stdout);
 				interface.driver = std::make_unique<VictrixGambitHost>(gp_idx);
@@ -568,7 +577,8 @@ public:
 						ps4_composite_keepalive = true;
 					}
 				}
-				const bool xbox360w_periodic = iface.host_driver_type == HostDriverType::XBOX360W;
+				const bool xbox360w_periodic = iface.host_driver_type == HostDriverType::XBOX360W ||
+				                               iface.host_driver_type == HostDriverType::XBOX_DONGLE;
 				if (!(iface.gamepad->new_pad_out() || iface.gamepad->has_rumble() || ps4_hid_periodic ||
 				      ps3_hid_periodic || switch_pro_hid_periodic || ps4_composite_keepalive ||
 				      xbox360w_periodic))

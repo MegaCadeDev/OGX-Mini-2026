@@ -12,6 +12,7 @@ This folder holds **firmware user guides**, **references**, and **contributor** 
 |----------|-------------|
 | [Support_Issue_Requirements.md](Support_Issue_Requirements.md) | **Required details** for GitHub issues. Incomplete reports may be **closed or delayed**. |
 | [Web_App_Guide.md](Web_App_Guide.md) | Check a controller in the web app (live sticks, link health) and generate the **diagnostics log report** for an issue. |
+| [Xbox_Wireless_Adapter.md](Xbox_Wireless_Adapter.md) | Opt-in build that hosts the **Xbox Wireless Adapter** (1790) dongle: supplying Microsoft's radio firmware, building, pairing, licensing. |
 | [Building_From_Source.md](Building_From_Source.md) | Clone, submodules, **required tools**, Pico SDK, and build/flash on Linux / macOS / Windows. |
 | [Firmware_Architecture.md](Firmware_Architecture.md) | How the firmware is structured, runtime flow, modules, and **every file to touch** when adding host/device drivers. |
 | [Adding_Supported_Controllers.md](Adding_Supported_Controllers.md) | Add a new input pad: **dedicated driver by default**, adapter-side capture, PadIn mapping, Debug UART. |

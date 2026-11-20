@@ -6,6 +6,9 @@
 #include "class/hid/hid_host.h"
 
 #include "USBHost/HostDriver/XInput/tuh_xinput/tuh_xinput.h"
+#if defined(CONFIG_OGXM_XBOX_DONGLE)
+#include "USBHost/HostDriver/XboxDongle/tuh_xbox_dongle.h"
+#endif
 #include "Board/board_api.h"
 #include "Diagnostics/Diagnostics.h"
 #include "USBHost/HostManager.h"
@@ -40,6 +43,7 @@ const char* host_type_name(HostDriverType t)
         case HostDriverType::VICTRIX_GAMBIT: return "VICTRIX_GAMBIT";
         case HostDriverType::XBOXOG: return "XBOXOG";
         case HostDriverType::XBOXONE: return "XBOXONE";
+        case HostDriverType::XBOX_DONGLE: return "XBOX_DONGLE";
         case HostDriverType::XBOX360W: return "XBOX360W";
         case HostDriverType::XBOX360: return "XBOX360";
         case HostDriverType::XBOX360_CHATPAD: return "XBOX360_CHATPAD";
@@ -64,8 +68,17 @@ void log_usb_driver_select(uint8_t address, uint8_t instance, HostManager::Drive
 #endif
 
 usbh_class_driver_t const* usbh_app_driver_get_cb(uint8_t* driver_count) {
+#if defined(CONFIG_OGXM_XBOX_DONGLE)
+    static const usbh_class_driver_t drivers[2] = {
+        *tuh_xinput::class_driver(),
+        *tuh_xbox_dongle::class_driver(),
+    };
+    *driver_count = 2;
+    return drivers;
+#else
     *driver_count = 1;
     return tuh_xinput::class_driver();
+#endif
 }
 
 #if defined(CONFIG_OGXM_DEBUG)

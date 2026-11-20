@@ -29,7 +29,8 @@ enum class HostDriverType
     XBOX360W,
     XBOX360,
     XBOX360_CHATPAD,
-    HID_GENERIC
+    HID_GENERIC,
+    XBOX_DONGLE
 };
 
 #endif // HOST_DRIVER_TYPES_H

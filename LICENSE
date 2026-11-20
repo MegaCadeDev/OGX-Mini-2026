@@ -13,6 +13,14 @@ v2.1 (or later). A copy of the LGPL v2.1 is included in
 Firmware/external/libxsm3/LICENSE.txt. libxsm3 also uses ExCrypt (3-clause BSD); 
 see Firmware/external/libxsm3/README.md for credits.
 
+Xbox Wireless Adapter (045E:02FE) support: Builds configured with
+OGXM_XBOX_DONGLE_FW include Firmware/RP2040/src/USBHost/HostDriver/XboxDongle,
+which is derived from xone (https://github.com/dlundqvist/xone) and licensed
+under the GNU General Public License v2.0 or later. Those builds are therefore
+distributed under the GPL. The adapter's radio firmware is Microsoft's and is
+not part of this repository; it is supplied by the person building the
+firmware. Builds without OGXM_XBOX_DONGLE_FW do not include any of this code.
+
 Xbox 360 controller rumble/vibration: Host-side rumble handling (including 
 wireless RUMBLE_ENABLE sequence) is attributed to faithvoid 
 (https://github.com/faithvoid).

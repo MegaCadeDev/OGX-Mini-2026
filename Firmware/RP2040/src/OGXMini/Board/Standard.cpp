@@ -12,6 +12,9 @@
 #include "pio_usb.h"
 
 #include "USBHost/HostManager.h"
+#if defined(CONFIG_OGXM_XBOX_DONGLE)
+#include "USBHost/HostDriver/XboxDongle/tuh_xbox_dongle.h"
+#endif
 #include "USBHost/GPIOHost/GPIOHost.h"
 #include "USBDevice/DeviceManager.h"
 #include "USBDevice/DeviceDriver/DeviceDriverTypes.h"
@@ -192,6 +195,9 @@ void core1_task() {
         pio_usb_sof_service_due_frames();
         TaskQueue::Core1::process_tasks();
         tuh_task();
+#if defined(CONFIG_OGXM_XBOX_DONGLE)
+        tuh_xbox_dongle::task();
+#endif
         if (host_ever_mounted) {
             continue;
         }
