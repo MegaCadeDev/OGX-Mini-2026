@@ -1,3 +1,4 @@
+#include "Diagnostics/Diagnostics.h"
 #include "tusb_option.h"
 #if (TUSB_OPT_DEVICE_ENABLED && CFG_TUD_XID)
 
@@ -234,6 +235,8 @@ static uint16_t xid_open(uint8_t rhport, tusb_desc_interface_t const *itf_desc, 
 
 static bool xid_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result, uint32_t xferred_bytes)
 {
+    if ((ep_addr & 0x80) && result == XFER_RESULT_SUCCESS)
+        diag::usb_report_sent();  // the host read a report (diagnostics)
     // uint8_t index = get_idx_by_edpt(ep_addr);
 
     // TU_VERIFY(result == XFER_RESULT_SUCCESS, true);

@@ -73,8 +73,12 @@ namespace SwitchPro
 	{
 		static constexpr uint8_t MINUS   = (1U << 0);
 		static constexpr uint8_t PLUS    = (1U << 1);
-		static constexpr uint8_t L3      = (1U << 2);
-		static constexpr uint8_t R3      = (1U << 3);
+		/* Bit 2 is the RIGHT stick click and bit 3 the LEFT one (console, and
+		 * Linux hid-nintendo: JC_BTN_RSTICK = BIT(10), JC_BTN_LSTICK = BIT(11)
+		 * in the 24-bit button field). They used to be swapped here, so every
+		 * pad showed L3/R3 inverted in Switch Pro output mode. */
+		static constexpr uint8_t R3      = (1U << 2);
+		static constexpr uint8_t L3      = (1U << 3);
 		static constexpr uint8_t HOME    = (1U << 4);
 		static constexpr uint8_t CAPTURE = (1U << 5);
 	}

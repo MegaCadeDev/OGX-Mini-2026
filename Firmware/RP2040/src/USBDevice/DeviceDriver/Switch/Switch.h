@@ -7,6 +7,8 @@
 
 #include "USBDevice/DeviceDriver/DeviceDriver.h"
 #include "Descriptors/SwitchProDevice.h"
+#include "USBDevice/DeviceDriver/Switch/SwitchImu.h"
+#include "USBDevice/DeviceDriver/Switch/HdRumble.h"
 
 class SwitchDevice : public DeviceDriver
 {
@@ -42,7 +44,16 @@ private:
     bool vibration_enabled_ = false;
     std::array<uint8_t, 6> addr_ = { 0x7C, 0xBB, 0x8A, 0x12, 0x34, 0x56 };
 
+    /* Motion for the emulated Pro Controller (sent only after the host enables the IMU with
+     * subcommand 0x40, like the real controller). */
+    bool imu_enabled_ = false;
+    bool imu_valid_ = false;
+    switch_imu::Sample imu_sample_{};
+
     // Latest rumble decoded from host 0x01/0x10/0x11 output; applied in process().
+    // HD rumble is stateful, so each motor keeps its own decoder.
+    hd_rumble::Decoder rumble_dec_l_;
+    hd_rumble::Decoder rumble_dec_r_;
     uint8_t rumble_l_ = 0;
     uint8_t rumble_r_ = 0;
     bool rumble_dirty_ = false;

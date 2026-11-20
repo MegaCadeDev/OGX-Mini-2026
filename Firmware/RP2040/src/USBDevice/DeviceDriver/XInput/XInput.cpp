@@ -8,6 +8,9 @@
 #include "USBDevice/DeviceDriver/XInput/tud_xinput/tud_xinput.h"
 #include "USBDevice/DeviceDriver/XInput/XInput.h"
 #include "Board/ogxm_log.h"
+#include "hardware/structs/usb.h"
+#include "hardware/regs/usb.h"
+#include "hardware/sync.h"
 #if defined(CONFIG_EN_USB_HOST)
 #include "USBHost/HostDriver/GameSirCyclone2/GameSirCyclone2Trace.h"
 #include "Input/InputSlot.h"
@@ -144,6 +147,39 @@ namespace {
 #endif
 }
 
+static void xbox360_send_wake_signal()
+{
+    constexpr uint32_t WAKE_DURATION_US = 11087;
+
+    const uint32_t direct_mask =
+        USB_SIE_CTRL_DIRECT_EN_BITS |
+        USB_SIE_CTRL_DIRECT_DP_BITS |
+        USB_SIE_CTRL_DIRECT_DM_BITS;
+
+    const uint32_t wake_state =
+        USB_SIE_CTRL_DIRECT_EN_BITS |
+        USB_SIE_CTRL_DIRECT_DM_BITS;
+
+    // Force:
+    //   D+ = LOW
+    //   D- = HIGH
+    //
+    // This matches the wake state observed from a wired xbox controller
+    hw_write_masked(
+        &usb_hw->sie_ctrl,
+        wake_state,
+        direct_mask
+    );
+
+    sleep_us(WAKE_DURATION_US);
+
+    // Return ownership of D+/D- to the USB controller.
+    hw_clear_bits(
+        &usb_hw->sie_ctrl,
+        USB_SIE_CTRL_DIRECT_EN_BITS
+    );
+}
+
 void XInputDevice::initialize()
 {
 	class_driver_ = *tud_xinput::class_driver();
@@ -216,38 +252,88 @@ void XInputDevice::process(const uint8_t idx, Gamepad& gamepad)
 	in_report_.joystick_rx = gp_in.joystick_rx;
 	in_report_.joystick_ry = Range::invert(gp_in.joystick_ry);
 
-	// Remote wake when host has suspended the bus (e.g. 360 "off" with USB power kept):
-	// - Guide (Home) press, or
-	// - Start held for 3 seconds (avoids holding Guide on Xbox One/PS5 pads, which can turn the controller off).
+	/*
+	 * Wake Xbox 360 from standby/off state:
+	 *
+	 * - Guide wakes the console immediately.
+	 * - Hold Start for 2 seconds as an alternative.
+	 *
+	 * Some controllers report Guide/Home as a momentary system-button
+	 * event even when the physical button remains held, so Guide cannot
+	 * reliably use a hold timer.
+	 *
+	 * Xbox 360 standby does not appear as a normal USB suspend state,
+	 * so tud_suspended() / tud_remote_wakeup() are not used here.
+	 *
+	 * Instead, when no active USB host is mounted, reproduce the
+	 * wake bus state observed from a genuine wired Xbox 360 controller.
+	 */
 	{
+		static bool guide_wake_sent = false;
 		static bool start_wake_sent = false;
 		static bool start_held = false;
 		static absolute_time_t start_hold_begin = { 0 };
-		bool start_pressed = (gp_in.buttons & Gamepad::BUTTON_START) != 0;
-		if (start_pressed)
+
+		const bool guide_pressed =
+			(gp_in.buttons & Gamepad::BUTTON_SYS) != 0;
+
+		const bool start_pressed =
+			(gp_in.buttons & Gamepad::BUTTON_START) != 0;
+
+		const bool xbox_host_active = tud_mounted();
+
+		if (!xbox_host_active)
 		{
-			if (!start_held)
+			/*
+			 * Guide is already an explicit system/power action, so wake
+			 * immediately when a Guide press is received.
+			 */
+			if (guide_pressed && !guide_wake_sent)
 			{
-				start_held = true;
-				start_hold_begin = get_absolute_time();
+				xbox360_send_wake_signal();
+				guide_wake_sent = true;
+			}
+			else if (!guide_pressed)
+			{
+				guide_wake_sent = false;
+			}
+
+			/*
+			 * Start is a normal gameplay button, so require a deliberate
+			 * 2-second hold before using it as the wake fallback.
+			 */
+			if (start_pressed)
+			{
+				if (!start_held)
+				{
+					start_held = true;
+					start_hold_begin = get_absolute_time();
+				}
+				else if (!start_wake_sent)
+				{
+					uint64_t hold_ms =
+						to_ms_since_boot(get_absolute_time()) -
+						to_ms_since_boot(start_hold_begin);
+
+					if (hold_ms >= 2000)
+					{
+						xbox360_send_wake_signal();
+						start_wake_sent = true;
+					}
+				}
 			}
 			else
 			{
-				uint64_t hold_ms = to_ms_since_boot(get_absolute_time()) - to_ms_since_boot(start_hold_begin);
-				if (hold_ms >= 3000 && tud_suspended() && !start_wake_sent)
-				{
-					tud_remote_wakeup();
-					start_wake_sent = true;
-				}
+				start_held = false;
+				start_wake_sent = false;
 			}
 		}
 		else
 		{
-			start_held = false;
+			guide_wake_sent = false;
 			start_wake_sent = false;
+			start_held = false;
 		}
-		if (tud_suspended() && (gp_in.buttons & Gamepad::BUTTON_SYS))
-			tud_remote_wakeup();
 	}
 
 	/* Final face swap for Cyclone 2 Switch only — after all PadIn→XInput mapping. */

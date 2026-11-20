@@ -1,0 +1,90 @@
+diff --git a/src/components/bluepad32/bt/uni_bt_le.c b/src/components/bluepad32/bt/uni_bt_le.c
+index 464dd4b..de92683 100644
+--- a/src/components/bluepad32/bt/uni_bt_le.c
++++ b/src/components/bluepad32/bt/uni_bt_le.c
+@@ -53,6 +53,7 @@
+  *  uni_hid_device_set_ready()
+  */
+ 
++#include "uni_diag_hooks.h"
+ #include "bt/uni_bt_le.h"
+ #include "bt/uni_bt.h"
+ 
+@@ -578,6 +579,8 @@ static void uni_device_information_packet_handler(uint8_t packet_type,
+         return;
+     }
+ 
++    uni_diag_on_device_information(packet, size);
++
+     code = hci_event_gattservice_meta_get_subevent_code(packet);
+     switch (code) {
+         case GATTSERVICE_SUBEVENT_SCAN_PARAMETERS_SERVICE_CONNECTED:
+diff --git a/src/components/bluepad32/include/uni_diag_hooks.h b/src/components/bluepad32/include/uni_diag_hooks.h
+new file mode 100644
+index 0000000..dea4456
+--- /dev/null
++++ b/src/components/bluepad32/include/uni_diag_hooks.h
+@@ -0,0 +1,26 @@
++// SPDX-License-Identifier: Apache-2.0
++// OGX-Mini-improved: optional diagnostics hooks. Weak no-op defaults in uni_hid_parser.c; an
++// application defines them to see raw input reports and BLE Device Information values.
++
++#ifndef UNI_DIAG_HOOKS_H
++#define UNI_DIAG_HOOKS_H
++
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++struct uni_hid_device_s;
++
++// Every input report, before it is parsed (report[0] is the report ID).
++void uni_diag_on_input_report(struct uni_hid_device_s* d, const uint8_t* report, uint16_t report_len);
++
++// Every GATT service event of the BLE Device Information query (HCI_EVENT_GATTSERVICE_META).
++void uni_diag_on_device_information(const uint8_t* packet, uint16_t size);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif  // UNI_DIAG_HOOKS_H
+diff --git a/src/components/bluepad32/parser/uni_hid_parser.c b/src/components/bluepad32/parser/uni_hid_parser.c
+index 72f4c8f..ee12708 100644
+--- a/src/components/bluepad32/parser/uni_hid_parser.c
++++ b/src/components/bluepad32/parser/uni_hid_parser.c
+@@ -2,6 +2,7 @@
+ // Copyright 2019 Ricardo Quesada
+ // http://retro.moe/unijoysticle2
+ 
++#include "uni_diag_hooks.h"
+ #include "parser/uni_hid_parser.h"
+ 
+ #include "hid_usage.h"
+@@ -20,9 +21,24 @@
+ #define USE_NEW_PARSER_API 0
+ #endif
+ 
++__attribute__((weak)) void uni_diag_on_input_report(struct uni_hid_device_s* d,
++                                                    const uint8_t* report,
++                                                    uint16_t report_len) {
++    (void)d;
++    (void)report;
++    (void)report_len;
++}
++
++__attribute__((weak)) void uni_diag_on_device_information(const uint8_t* packet, uint16_t size) {
++    (void)packet;
++    (void)size;
++}
++
+ void uni_hid_parse_input_report(struct uni_hid_device_s* d, const uint8_t* report, uint16_t report_len) {
+     btstack_hid_parser_t parser;
+ 
++    uni_diag_on_input_report(d, report, report_len);
++
+     uni_report_parser_t* rp = &d->report_parser;
+ 
+     //    printf_hexdump(report, report_len);

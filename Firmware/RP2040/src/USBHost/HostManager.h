@@ -10,6 +10,7 @@
 
 #include "Board/Config.h"
 #include "Board/board_api.h"
+#include "Board/board_api_private/board_api_private.h"
 #include "Board/ogxm_log.h"
 #include "Input/InputSlot.h"
 #if defined(CONFIG_EN_USB_HOST)
@@ -580,8 +581,12 @@ public:
 				iface.driver->send_feedback(*iface.gamepad, device_slot.address, iface.usb_instance);
 				tuh_task();
 #if defined(CONFIG_EN_USB_HOST)
-				/* Nested tuh_task during OUT must not starve PIO USB SOF or wired IN dies in ~1–2 s. */
-				pio_usb_host_frame();
+				/* Skip if the hardware SOF timer is already servicing frames — avoids reentrancy
+				 * that freezes the host when rumble triggers this path (Pico W + Ultimate 2 dongle). */
+				if (!board_api_usbh::sof_timer_active())
+				{
+					pio_usb_host_frame();
+				}
 #endif
 			}
 		}

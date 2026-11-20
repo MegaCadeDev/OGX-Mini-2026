@@ -1,3 +1,44 @@
+# Apply a series of patches (in order, each on top of the previous) in DIR, unless the series
+# is already applied. A later patch changes the context of earlier ones, so per-patch reverse
+# checks stop matching; instead: last patch reverse-applies => whole series applied; first
+# patch applies cleanly => apply all in order; anything else (partial / drifted) fails the build.
+function(ogxm_apply_patch_series NAME DIR)
+    set(_patches ${ARGN})
+    list(GET _patches -1 _last)
+    list(GET _patches 0 _first)
+    execute_process(
+        COMMAND git apply --check --reverse --ignore-whitespace ${_last}
+        WORKING_DIRECTORY ${DIR}
+        RESULT_VARIABLE _already
+        OUTPUT_QUIET ERROR_QUIET
+    )
+    if (_already EQUAL 0)
+        message(STATUS "${NAME} patches already applied.")
+        return()
+    endif ()
+    execute_process(
+        COMMAND git apply --check --ignore-whitespace ${_first}
+        WORKING_DIRECTORY ${DIR}
+        RESULT_VARIABLE _clean
+        ERROR_VARIABLE _error
+    )
+    if (NOT _clean EQUAL 0)
+        message(FATAL_ERROR "${NAME} patches are partially applied or out of date: ${_error}")
+    endif ()
+    foreach (_patch IN LISTS _patches)
+        message(STATUS "Applying ${NAME} patch: ${_patch}")
+        execute_process(
+            COMMAND git apply --ignore-whitespace ${_patch}
+            WORKING_DIRECTORY ${DIR}
+            RESULT_VARIABLE _result
+            ERROR_VARIABLE _error
+        )
+        if (NOT _result EQUAL 0)
+            message(FATAL_ERROR "Failed to apply ${NAME} patch ${_patch}: ${_error}")
+        endif ()
+    endforeach ()
+endfunction()
+
 function(apply_lib_patches EXTERNAL_DIR)
     set(BTSTACK_PATCH "${EXTERNAL_DIR}/patches/btstack_l2cap.diff")
     set(BTSTACK_PATH "${EXTERNAL_DIR}/bluepad32/external/btstack")
@@ -129,6 +170,35 @@ function(apply_lib_patches EXTERNAL_DIR)
         message(FATAL_ERROR "Failed to apply Bluepad32 8BitDo PID patch: ${BLUEPAD32_8BITDO_ERROR}")
     endif ()
 
+    # Switch parser fixes, applied in order on top of each other:
+    # - enable vibration (subcommand 0x48) during setup: Joy-Cons ignore rumble until then;
+    # - setup robustness: per-step timeout + retries, stale-reply filtering, one pad in
+    #   setup at a time, and timer cleanup before a device's parser data is wiped;
+    # - request-sleep: subcommand 0x06/0x00 so a Joy-Con drops the link and sleeps;
+    # - pair IMU: a merged Joy-Con pair keeps (and parses) only the selected half's IMU;
+    # - rumble intensity: the magnitudes set the amplitudes at a fixed frequency, the same data
+    #   on both actuators as SDL sends it (weak = high band, strong = low band), instead of
+    #   being encoded as a frequency with a fixed amplitude.
+    ogxm_apply_patch_series("Bluepad32 Switch parser" "${BLUEPAD32_PATH}"
+        "${EXTERNAL_DIR}/patches/bluepad32_switch_enable_vibration.diff"
+        "${EXTERNAL_DIR}/patches/bluepad32_switch_setup_robustness.diff"
+        "${EXTERNAL_DIR}/patches/bluepad32_switch_request_sleep.diff"
+        "${EXTERNAL_DIR}/patches/bluepad32_switch_pair_imu.diff"
+        "${EXTERNAL_DIR}/patches/bluepad32_switch_rumble_intensity.diff")
+
+    # DS4 parser: keep the latest touch points for touchpad passthrough.
+    ogxm_apply_patch_series("Bluepad32 DS4 parser" "${BLUEPAD32_PATH}"
+        "${EXTERNAL_DIR}/patches/bluepad32_ds4_touchpad.diff")
+
+    # Output queue: byte-stream ring buffer, backport of ricardoquesada/bluepad32 b6531db. The old
+    # 32-slot queue dropped packets when full, a queued rumble "stop" among them (stuck rumble).
+    ogxm_apply_patch_series("Bluepad32 output queue" "${BLUEPAD32_PATH}"
+        "${EXTERNAL_DIR}/patches/bluepad32_output_ring_buffer.diff")
+
+    # Diagnostics hooks: raw input reports and BLE Device Information values (Diagnostics/).
+    ogxm_apply_patch_series("Bluepad32 diagnostics hooks" "${BLUEPAD32_PATH}"
+        "${EXTERNAL_DIR}/patches/bluepad32_diagnostics_hooks.diff")
+
     # Pico SDK 2.1.x still lists BTstack's old hids_client.c; Bluepad32's BTstack
     # v1.8 renamed it to hids_host.c. Patch the SDK cmake when using that tree.
     set(PICO_SDK_HIDS_PATCH "${EXTERNAL_DIR}/patches/pico_sdk_hids_host.diff")
@@ -172,5 +242,34 @@ function(apply_lib_patches EXTERNAL_DIR)
             message(FATAL_ERROR "Failed to apply Pico SDK CYW43 HCI pre-buffer patch: ${PICO_SDK_CYW43_HCI_PREBUFFER_ERROR}")
         endif ()
     endif ()
+
+
+    # Pico SDK 2.1.0 can leave the async context's alarm unarmed, so BTstack timers only run
+    # when a BT packet wakes the context (#146: an idle Xbox Series pad's connect rumble ran
+    # until a button press). Both fixes are needed:
+    #  - async context: alarm_pending stayed set after cancelling the alarm with no timer left
+    #    (backport of raspberrypi/pico-sdk#2838, SDK 2.3.0);
+    #  - alarm pool: the hardware alarm could stay disarmed when its stale compare value looked
+    #    earlier than the new target (backport of raspberrypi/pico-sdk#2127, #2190, #2382).
+    foreach (PICO_SDK_TIMER_PATCH pico_sdk_async_context_alarm_pending.diff pico_sdk_time_adapter_alarm.diff)
+        set(PICO_SDK_TIMER_PATCH_FILE "${EXTERNAL_DIR}/patches/${PICO_SDK_TIMER_PATCH}")
+        if (EXISTS "${PICO_SDK_PATH_LOCAL}/src/rp2_common/pico_async_context/async_context_threadsafe_background.c")
+            message(STATUS "Applying Pico SDK timer patch: ${PICO_SDK_TIMER_PATCH_FILE}")
+            execute_process(
+                COMMAND git apply --ignore-whitespace ${PICO_SDK_TIMER_PATCH_FILE}
+                WORKING_DIRECTORY ${PICO_SDK_PATH_LOCAL}
+                RESULT_VARIABLE PICO_SDK_TIMER_PATCH_RESULT
+                OUTPUT_VARIABLE PICO_SDK_TIMER_PATCH_OUTPUT
+                ERROR_VARIABLE PICO_SDK_TIMER_PATCH_ERROR
+            )
+            if (PICO_SDK_TIMER_PATCH_RESULT EQUAL 0)
+                message(STATUS "Pico SDK timer patch applied successfully.")
+            elseif (PICO_SDK_TIMER_PATCH_ERROR MATCHES "patch does not apply")
+                message(STATUS "Pico SDK timer patch already applied.")
+            else ()
+                message(FATAL_ERROR "Failed to apply Pico SDK timer patch ${PICO_SDK_TIMER_PATCH}: ${PICO_SDK_TIMER_PATCH_ERROR}")
+            endif ()
+        endif ()
+    endforeach ()
 
 endfunction()

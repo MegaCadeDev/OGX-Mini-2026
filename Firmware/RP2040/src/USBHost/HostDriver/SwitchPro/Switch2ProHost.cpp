@@ -147,13 +147,17 @@ void Switch2ProHost::process_report(Gamepad& gamepad, uint8_t address, uint8_t i
 
     // "Misc" byte: d-pad uses some classic − / + / L3 / R3 bit positions; L uses the Home bit.
     // L3 here is d-pad left (capture: 00 04 00); stick R3 is bm bit 7 above.
+    /* Explicit bits (0x04 left, 0x08 up): Buttons1::L3 / R3 follow the Pro Controller's
+     * stick clicks, which are not these d-pad bits on the Switch 2 Pro. */
+    constexpr uint8_t kDpadLeftBit = 1U << 2;
+    constexpr uint8_t kDpadUpBit = 1U << 3;
     if (bm & SwitchPro::Buttons1::MINUS)
         gp_in.dpad |= gamepad.MAP_DPAD_DOWN;
-    if (bm & SwitchPro::Buttons1::L3)
+    if (bm & kDpadLeftBit)
         gp_in.dpad |= gamepad.MAP_DPAD_LEFT;
     if (bm & SwitchPro::Buttons1::PLUS)
         gp_in.dpad |= gamepad.MAP_DPAD_RIGHT;
-    if (bm & SwitchPro::Buttons1::R3)
+    if (bm & kDpadUpBit)
         gp_in.dpad |= gamepad.MAP_DPAD_UP;
     if (bm & SwitchPro::Buttons1::HOME)
         gp_in.buttons |= gamepad.MAP_BUTTON_LB;

@@ -11,20 +11,6 @@ namespace
 {
 	constexpr uint8_t VIB_OPTS[4] = { 0x0A, 0x0C, 0x0B, 0x09 };
 
-	/** HD rumble motor block → 0–255 intensity (dekuNukem / Switch Pro reverse engineering). */
-	uint8_t hd_rumble_amplitude(const uint8_t motor[4])
-	{
-		if (motor[0] == 0x00 && motor[1] == 0x01 && motor[2] == 0x40 && motor[3] == 0x40)
-			return 0;
-
-		const uint8_t hfa = static_cast<uint8_t>((motor[1] >> 1) & 0x7F);
-		const uint16_t lfa = static_cast<uint16_t>(motor[3] | ((static_cast<uint16_t>(motor[2] & 0x80u)) << 1));
-
-		const uint8_t hfa_scaled = (hfa > 127) ? 255 : static_cast<uint8_t>(hfa * 2);
-		const uint8_t lfa_scaled = (lfa > 255) ? 255 : static_cast<uint8_t>(lfa);
-		return (hfa_scaled > lfa_scaled) ? hfa_scaled : lfa_scaled;
-	}
-
 	bool is_rumble_output_cmd(uint8_t cmd)
 	{
 		return cmd == SwitchPro::REPORT_ID_OUTPUT_SUBCMD ||
@@ -153,7 +139,13 @@ void SwitchDevice::build_standard_report(const SwitchPro::SwitchReport& sw)
 		vibration_report_ = VIB_OPTS[vibration_idx_];
 	}
 	report_[11] = vibration_report_;
-	/* IMU passthrough disabled for now (report bytes 12–47 stay zero). */
+	/* IMU in bytes 12-47, three 12-byte samples (accel xyz, gyro xyz). The pad state only
+	 * updates once per report, so the same sample is repeated. */
+	if (imu_enabled_ && imu_valid_)
+	{
+		for (int i = 0; i < 3; ++i)
+			std::memcpy(report_.data() + 12 + i * sizeof(imu_sample_), &imu_sample_, sizeof(imu_sample_));
+	}
 }
 
 void SwitchDevice::build_subcommand_reply(const SwitchPro::SwitchReport& sw)
@@ -189,6 +181,7 @@ void SwitchDevice::build_subcommand_reply(const SwitchPro::SwitchReport& sw)
 			break;
 		case SwitchPro::SUBCMD_IMU:
 			r[0] = 0x80; r[1] = 0x40;
+			imu_enabled_ = pending_output_[11] != 0;  // host enables / disables the IMU
 			break;
 		case SwitchPro::SUBCMD_IMU_SENS:
 			r[0] = 0x80; r[1] = 0x41;
@@ -250,8 +243,8 @@ void SwitchDevice::build_subcommand_reply(const SwitchPro::SwitchReport& sw)
 			}
 			else if (addr_hi == 0x60 && addr_lo == 0x20)
 			{
-				const uint8_t sa[24] = { 0xCC, 0x00, 0x40, 0x00, 0x91, 0x01, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0xE7, 0xFF, 0x0E, 0x00, 0xDC, 0xFF, 0x3B, 0x34, 0x3B, 0x34, 0x3B, 0x34 };
-				std::memcpy(r + 7, sa, 24);
+				/* Zero-offset factory IMU calibration matching switch_imu's scaling. */
+				std::memcpy(r + 7, switch_imu::kFactoryCalibration, 24);
 			}
 			else
 				std::memset(r + 7, 0xFF, read_len);
@@ -283,8 +276,8 @@ void SwitchDevice::parse_host_rumble(uint8_t report_id, uint8_t const* buffer, u
 	else
 		return;
 
-	const uint8_t left = hd_rumble_amplitude(motor_l);
-	const uint8_t right = hd_rumble_amplitude(motor_r);
+	const uint8_t left = rumble_dec_l_.apply(motor_l);
+	const uint8_t right = rumble_dec_r_.apply(motor_r);
 	if (left == rumble_l_ && right == rumble_r_)
 		return;
 	rumble_l_ = left;
@@ -307,6 +300,7 @@ void SwitchDevice::process(const uint8_t idx, Gamepad& gamepad)
 	// Always read latest state and build report so get_report_cb and IN pushes both see current state (minimal latency).
 	Gamepad::PadIn gp_in = gamepad.get_pad_in();
 	gamepad_to_switch_report(gp_in, switch_report_, gamepad);
+	imu_valid_ = switch_imu::to_switch_sample(gp_in, imu_sample_);
 
 	bool is_subcommand = has_pending_output_;
 	if (has_pending_output_)

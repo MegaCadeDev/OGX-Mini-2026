@@ -144,9 +144,61 @@ Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 
 **Problem:** Output reports **`0x01`** / **`0x10`** / **`0x11`** (and related rumble commands) were acknowledged for Switch protocol bookkeeping but never decoded into **`PadOut`**, so wireless pads never vibrated in Switch mode.
 
-**Approach:** Parse left/right HD rumble motor blocks (dekuNukem-style amplitude decode), write **`rumble_l` / `rumble_r`** into `PadOut`, and let Bluepad32 / USB host feedback forward motors to the input controller. Applies to all boards that support Switch output (including Pico 2 W / RP2354 with BT pads).
+**Approach:** Parse left/right HD rumble motor blocks, write **`rumble_l` / `rumble_r`** into `PadOut`, and let Bluepad32 / USB host feedback forward motors to the input controller. Applies to all boards that support Switch output (including Pico 2 W / RP2354 with BT pads).
 
-**Files:** `src/USBDevice/DeviceDriver/Switch/Switch.cpp`, `Switch.h`.
+**Decoding:** hosts send every block form: the plain one-sample block (low-band amplitude is a code offset by `0x40`, `0x40` = silent) and the compact 2- and 3-sample forms, whose 5-bit commands are relative to the motor's previous amplitude. Each motor keeps its own decoder (`HdRumble`) and the amplitude the block leaves it at is used, scaled so the documented maximum (code 100) is 255. Steam's UI ticks (`00 00 05 c0`: silence, a 4 % blip, silence) therefore end silent instead of reading as a strong rumble that never stops.
+
+**Files:** `src/USBDevice/DeviceDriver/Switch/Switch.cpp`, `Switch.h`, `HdRumble.cpp`, `HdRumble.h`.
+
+---
+
+## Adapter options (web app)
+
+**Goal:** Dongle-wide options that a build gives a default to and users can still change from the web app, without a rebuild.
+
+**Format:** `UserSettings/DongleSettings` — 8 bytes, used as is in flash (key `dongle_cfg`) and on the wire: a version byte (`1`) then one byte per option (`0` / `1`). Each option has a fixed index and a default from a CMake option; a missing or other-version record falls back to the defaults.
+
+**Transport:** USB web app packets `GET_DONGLE_SETTINGS` (`0x70`, reply carries the 8 bytes) and `SET_DONGLE_SETTINGS` (`0x71`, stores and reboots); Bluetooth characteristic `12345678-1234-1234-1234-123456789060` (read, write stores and reboots like a profile write).
+
+**Adding an option:** next free index in `dongle_settings::Option`, its default in `defaults()` from a CMake option, read with `dongle_settings::enabled()`. Indices are part of the wire and flash format; never renumber them.
+
+---
+
+## Switch Pro output — motion
+
+**Goal:** Gyro / accelerometer in Switch Pro output mode (console, Steam Input, Linux `hid-nintendo`), from Joy-Cons (single or merged pair), DS4, DualSense and Switch Pro pads.
+
+**Problem:** The Switch output left the IMU bytes of the input report at zero, Joy-Cons were not a motion source at all, and a merged Joy-Con pair turned the IMU off on both halves.
+
+**Approach:**
+- `USBDevice/DeviceDriver/Switch/SwitchImu` converts `PadIn` motion into one Pro Controller IMU sample: Switch sources pass through (raw counts, gyro / 1000); DS4 and DualSense are rescaled (8192 per g, 1024 per deg/s → 4096 per g, 13371 / 936 per deg/s) and rotated to the Pro axes, `Pro = (-z, -x, y)` from the axes Bluepad32 delivers for them.
+- The Switch driver fills the three samples (report bytes 12–47) once the host enables the IMU (subcommand `0x40`), like the real controller, and answers SPI `0x6020` with a zero-offset factory IMU calibration that matches that scaling.
+- Joy-Cons are motion sources. `bluepad32_switch_pair_imu.diff`: a merged pair keeps (and parses) only one half's IMU and merges motion from it.
+- Adapter options (web app; CMake defaults): `OGXM_JOYCON_PAIR_IMU_SIDE` (`RIGHT` | `LEFT`, default `RIGHT`), `OGXM_JOYCON_PAIR_ORIENTATION` (`VERTICAL` | `HORIZONTAL`, default `VERTICAL`), `OGXM_JOYCON_SOLO_ORIENTATION` (default `HORIZONTAL`: a single Joy-Con held sideways, motion rotated 90° about Z). Invalid values fail the configure step.
+
+**Files:** `Switch/SwitchImu.*`, `Switch/Switch.*`, `Bluepad32/JoyConSettings.*`, `Bluepad32/Bluepad32.cpp`, `UserSettings/DongleSettings.*`, `CMakeLists.txt`, `patch_libs.cmake`, `bluepad32_switch_pair_imu.diff`.
+
+---
+
+## Switch pads — rumble intensity
+
+**Goal:** A Joy-Con / Switch Pro driven by this dongle should vibrate at the strength the host actually requested, and a single Joy-Con should rumble for either motor.
+
+**Problem:** Bluepad32's Switch parser (`switch_play_dual_rumble_now`) passed the requested 0-255 magnitude as a **frequency** argument to `switch_encode_rumble` and used a fixed amplitude (500), so intensity barely changed and the controller instead played different pitches. Weak also only went to the left actuator and strong to the right one, which a fixed amplitude on both sides hid.
+
+**Approach:** Do what SDL does (`SDL_hidapi_switch.c`, `HIDAPI_DriverSwitch_ActuallyRumbleJoystick`): the same 4 bytes on both actuators, the weak magnitude setting the high-band amplitude and the strong one the low-band amplitude, both bands at ~150 Hz, the magnitude mapped onto the full amplitude table (`rumble_amps`, the dekuNukem table, same codes as SDL's). A single Joy-Con has one actuator, so it now rumbles for either magnitude.
+
+**Files:** `Firmware/external/patches/bluepad32_switch_rumble_intensity.diff` (applied to `src/components/bluepad32/parser/uni_hid_parser_switch.c`).
+
+## Bluetooth — output queue (stuck Switch rumble)
+
+**Goal:** A rumble "stop" sent to a Switch pad must always arrive, so the pad never keeps vibrating.
+
+**Problem:** Bluepad32 queues output reports it cannot send right away in a 32-slot queue and drops new ones when it is full. On a busy or weak link a burst of rumble updates filled it, the queued "stop" was dropped and the pad kept vibrating. The earlier workaround re-sent a neutral rumble packet every second while idle (`Bluepad32/RumbleRefresh`).
+
+**Approach:** Backport of Bluepad32's byte-stream output queue (ricardoquesada/bluepad32 b6531db): a 4 KB ring buffer holding about 270 rumble packets instead of 31. The idle refresh is removed; the 350 ms Switch rumble duration stays (`Bluepad32/RumbleTiming.h`).
+
+**Files:** `Firmware/external/patches/bluepad32_output_ring_buffer.diff` (applied to `uni_circular_buffer.c/.h` and `uni_hid_device.c`), `Firmware/cmake/patch_libs.cmake`.
 
 ---
 
@@ -191,14 +243,16 @@ Improvements and fixes applied to the OGX-Mini RP2040 firmware in this project.
 | **USB VID:PID** | `054c:0ce6` (Sony DualSense) |
 | **Interfaces** | IF0: DualSense gamepad (64-byte HID report, ID `0x01`); IF1: relative HID mouse |
 | **DualSense input (BT or wired USB host)** | **`SteamPassthrough`** — full **64-byte** report copied each frame (ControllerMedic-style PS5 passthrough); wired host sticks/triggers taken from raw PS5 IN when available |
-| **Other input (Xbox, DS4, Switch Pro, etc.)** | **`SteamBtReport`** — synthesizes a DualSense **`PS5::InReport`** from PadIn / `uni_gamepad_t` (face → Cross/Circle/Square/Triangle, LB/RB → L1/R1, triggers, sticks, D-pad, Share/Options, PS, touchpad-click bit) |
+| **Other input (Xbox, DS4, Switch Pro, etc.)** | **`SteamBtReport`** — synthesizes a DualSense **`PS5::InReport`** from PadIn / `uni_gamepad_t` (face → Cross/Circle/Square/Triangle, LB/RB → L1/R1, triggers, sticks, D-pad, Share/Options, PS, touchpad-click bit); then `sony_reports::ds5_fill_synth` adds the fields a real DualSense carries: sequence number, **motion** in real DualSense units (16 per deg/s, 8192 per g), sensor clock (1/3 µs), **touch points** (DS4; "not touching" when there are none), **battery** |
+| **Feature reports** | Calibration (`0x05`, an ideal pad in those units), pairing info (`0x09`, a per-board MAC from the unique ID) and firmware info (`0x20`); they were all zeros, so hosts applying the calibration read motion wrong |
+| **Lightbar** | Host lightbar colour (output report, valid flag 1 bit 2) sent on to a DS4 / DualSense over Bluetooth |
 | **Descriptors** | `Descriptors/PS5Usb.h` (gamepad), `Descriptors/Steam.h` (composite + mouse interface) |
 
 ### Touchpad → mouse
 
 | Item | Detail |
 |------|--------|
-| **Input** | **DualSense (PS5)** — Bluetooth on Pico W / Pico 2 W (`uni_hid_parser_ds5_get_touchpad()`), or wired USB host (`PS5Host::process_report()` → `SteamPassthrough::store()`) |
+| **Input** | **DualSense (PS5)** — Bluetooth on Pico W / Pico 2 W (`uni_hid_parser_ds5_get_touchpad()`), or wired USB host (`PS5Host::process_report()` → `SteamPassthrough::store()`); **DualShock 4** over Bluetooth (`uni_hid_parser_ds4_get_touchpad()`, `bluepad32_ds4_touchpad.diff`), through the synthesized report |
 | **Output** | **`SteamTouchpad`** — touch finger deltas → **relative mouse** on IF1; touchpad click (`TP` / `MISC`) → **left button** |
 | **Report merge (BT)** | Raw touch bytes merged into USB report offset **33** (`SteamTouchpad::apply_to_passthrough()`) for Linux `hid-playstation` compatibility |
 | **No touchpad** | Mouse interface stays idle — no right-stick mouse fallback |
@@ -219,7 +273,7 @@ lsusb -v -d 054c:0ce6 2>/dev/null | grep -E "iProduct|bNumInterfaces|bEndpointAd
 sudo evtest   # select the mouse interface; drag touchpad for REL_X / REL_Y
 ```
 
-**Files:** `src/USBDevice/DeviceDriver/Steam/` (`Steam.cpp`, `SteamPassthrough.h`, `SteamBtReport.h`, `SteamTouchpad.cpp`), `src/Descriptors/PS5Usb.h`, `src/Descriptors/Steam.h`, `src/Bluepad32/Bluepad32.cpp`, `src/USBHost/HostDriver/PS5/PS5.cpp`, `WebApp/modules/userSettings.js` (mode label **SteamOS / Bazzite**).
+**Files:** `src/USBDevice/DeviceDriver/Steam/` (`Steam.cpp`, `SteamPassthrough.h`, `SteamBtReport.h`, `SteamTouchpad.cpp`), `src/USBDevice/DeviceDriver/Sony/` (`SonyReports.h`, `SonyImu.h`), `src/Board/BoardMac.h`, `src/Descriptors/PS5Usb.h`, `src/Descriptors/Steam.h`, `src/Bluepad32/Bluepad32.cpp`, `src/USBHost/HostDriver/PS5/PS5.cpp`, `WebApp/modules/userSettings.js` (mode label **SteamOS / Bazzite**).
 
 ---
 
