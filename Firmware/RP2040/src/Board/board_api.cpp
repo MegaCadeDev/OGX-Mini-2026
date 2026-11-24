@@ -65,15 +65,9 @@ bool usb::host_connected() {
     return false;
 }
 
-static std::atomic<bool> host_frame_timer_active_{false};
-
-void usb::set_host_frame_timer_active(bool active) {
-    host_frame_timer_active_.store(active, std::memory_order_release);
-}
-
 void usb::service_host_frame() {
 #if defined(CONFIG_EN_USB_HOST)
-    if (host_frame_timer_active_.load(std::memory_order_acquire)) {
+    if (board_api_usbh::sof_timer_active()) {
         return;
     }
     pio_usb_host_frame();

@@ -112,14 +112,23 @@ bool Xbox360WHost::send_feedback(Gamepad& gamepad, uint8_t address, uint8_t inst
         (active_address_ == address && active_instance_ != 0xFF) ? active_instance_ : instance;
     if (!tuh_xinput::is_connected(address, rumble_instance))
     {
+        rumble_synced_ = false;
         return false;
     }
     Gamepad::PadOut gp_out = gamepad.get_pad_out();
-    if (gp_out.rumble_l == 0 && gp_out.rumble_r == 0)
+    if (rumble_synced_ && gp_out.rumble_l == sent_rumble_l_ && gp_out.rumble_r == sent_rumble_r_)
     {
+        return true;
+    }
+    if (!tuh_xinput::set_rumble(address, rumble_instance, gp_out.rumble_l, gp_out.rumble_r, false))
+    {
+        rumble_synced_ = false;
         return false;
     }
-    return tuh_xinput::set_rumble(address, rumble_instance, gp_out.rumble_l, gp_out.rumble_r, false);
+    sent_rumble_l_ = gp_out.rumble_l;
+    sent_rumble_r_ = gp_out.rumble_r;
+    rumble_synced_ = true;
+    return true;
 }
 
 void Xbox360WHost::connect_cb(Gamepad& gamepad, uint8_t address, uint8_t instance)
@@ -127,6 +136,7 @@ void Xbox360WHost::connect_cb(Gamepad& gamepad, uint8_t address, uint8_t instanc
     (void)gamepad;
     active_address_ = address;
     active_instance_ = instance;
+    rumble_synced_ = false;
 }
 
 void Xbox360WHost::disconnect_cb(Gamepad& gamepad, uint8_t address, uint8_t instance)
@@ -138,4 +148,5 @@ void Xbox360WHost::disconnect_cb(Gamepad& gamepad, uint8_t address, uint8_t inst
     std::memset(prev_in_report_, 0, sizeof(prev_in_report_));
     active_instance_ = 0xFF;
     active_address_ = 0xFF;
+    rumble_synced_ = false;
 }

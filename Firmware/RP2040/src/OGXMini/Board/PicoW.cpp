@@ -94,7 +94,6 @@ static void pico_w_usb_sof_timer_start() {
      * the alarm_pool that collides on Pico W) like a dedicated Core1 loop in Wii mode. */
     if (add_repeating_timer_us(-1000, pico_w_usb_sof_timer_cb, nullptr, &s_pico_w_usb_sof_timer)) {
         s_pico_w_usb_sof_hw_timer = true;
-        board_api::usb::set_host_frame_timer_active(true);
     }
 }
 
@@ -104,7 +103,6 @@ static void pico_w_usb_sof_timer_stop() {
     }
     cancel_repeating_timer(&s_pico_w_usb_sof_timer);
     s_pico_w_usb_sof_hw_timer = false;
-    board_api::usb::set_host_frame_timer_active(false);
 }
 
 /** Debounce any unplug hint (line / stack) past USB bus reset glitches (10–50 ms). */
@@ -156,6 +154,10 @@ void stop_pio_usb_host() {
     s_usb_line_debounce_armed = false;
     s_usb_unplug_debounce_armed = false;
     enable_host_line_irq_monitoring();
+}
+
+bool sof_timer_active() {
+    return s_pico_w_usb_sof_hw_timer;
 }
 
 } // namespace board_api_usbh

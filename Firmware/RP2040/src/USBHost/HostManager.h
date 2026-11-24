@@ -10,6 +10,7 @@
 
 #include "Board/Config.h"
 #include "Board/board_api.h"
+#include "Board/board_api_private/board_api_private.h"
 #include "Board/ogxm_log.h"
 #include "Input/InputSlot.h"
 #if defined(CONFIG_EN_USB_HOST)
@@ -568,8 +569,10 @@ public:
 						ps4_composite_keepalive = true;
 					}
 				}
+				const bool xbox360w_periodic = iface.host_driver_type == HostDriverType::XBOX360W;
 				if (!(iface.gamepad->new_pad_out() || iface.gamepad->has_rumble() || ps4_hid_periodic ||
-				      ps3_hid_periodic || switch_pro_hid_periodic || ps4_composite_keepalive))
+				      ps3_hid_periodic || switch_pro_hid_periodic || ps4_composite_keepalive ||
+				      xbox360w_periodic))
 				{
 					continue;
 				}
@@ -580,7 +583,8 @@ public:
 				iface.driver->send_feedback(*iface.gamepad, device_slot.address, iface.usb_instance);
 				tuh_task();
 #if defined(CONFIG_EN_USB_HOST)
-				/* Nested tuh_task during OUT must not starve PIO USB SOF or wired IN dies in ~1–2 s. */
+				/* Skip if the hardware SOF timer is already servicing frames — avoids reentrancy
+				 * that freezes the host when rumble triggers this path (Pico W + Ultimate 2 dongle). */
 				board_api::usb::service_host_frame();
 #endif
 			}

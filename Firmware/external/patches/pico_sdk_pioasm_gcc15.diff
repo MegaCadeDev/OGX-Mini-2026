@@ -1,0 +1,24 @@
+diff --git a/tools/pioasm/output_format.h b/tools/pioasm/output_format.h
+index 405a5ae..b581ad3 100644
+--- a/tools/pioasm/output_format.h
++++ b/tools/pioasm/output_format.h
+@@ -7,6 +7,7 @@
+ #ifndef _OUTPUT_FORMAT_H
+ #define _OUTPUT_FORMAT_H
+
++#include <cstdint>
+ #include <vector>
+ #include <map>
+ #include <string>
+diff --git a/tools/pioasm/pio_types.h b/tools/pioasm/pio_types.h
+index 9f9fb0e..755eb75 100644
+--- a/tools/pioasm/pio_types.h
++++ b/tools/pioasm/pio_types.h
+@@ -7,6 +7,7 @@
+ #ifndef _PIO_TYPES_H
+ #define _PIO_TYPES_H
+
++#include <cstdint>
+ #include <string>
+ #include <map>
+ #include <set>

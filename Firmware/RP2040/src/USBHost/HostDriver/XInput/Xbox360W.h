@@ -25,6 +25,9 @@ private:
     uint8_t prev_in_report_[32]{0};
     uint8_t active_instance_{0xFF};
     uint8_t active_address_{0xFF};
+    uint8_t sent_rumble_l_{0};
+    uint8_t sent_rumble_r_{0};
+    bool rumble_synced_{false};
 };
 
 #endif // _XBOX360_WIRELESS_HOST_H_
