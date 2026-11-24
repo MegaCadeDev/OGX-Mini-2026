@@ -16,6 +16,7 @@ namespace board_api {
         void disconnect_all();
         /** True if TinyUSB host has at least one mounted gamepad driver (wired controller active). */
         bool host_any_pad_mounted();
+        void service_host_frame();
     }
 }
 

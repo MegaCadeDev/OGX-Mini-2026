@@ -585,10 +585,7 @@ public:
 #if defined(CONFIG_EN_USB_HOST)
 				/* Skip if the hardware SOF timer is already servicing frames — avoids reentrancy
 				 * that freezes the host when rumble triggers this path (Pico W + Ultimate 2 dongle). */
-				if (!board_api_usbh::sof_timer_active())
-				{
-					pio_usb_host_frame();
-				}
+				board_api::usb::service_host_frame();
 #endif
 			}
 		}

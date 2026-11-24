@@ -1,4 +1,5 @@
 #include <pico/stdlib.h>
+#include <atomic>
 #include <pico/mutex.h>
 #include <pico/multicore.h>
 #include <pico/platform.h>
@@ -42,7 +43,7 @@ void tusb_time_delay_ms_api(uint32_t ms) {
     const uint32_t start = tusb_time_millis_api();
     while ((tusb_time_millis_api() - start) < ms) {
 #if defined(CONFIG_EN_USB_HOST)
-        pio_usb_host_frame();
+        board_api::usb::service_host_frame();
         const uint32_t now = tusb_time_millis_api();
         while (tusb_time_millis_api() == now) {
             tight_loop_contents();
@@ -62,6 +63,15 @@ bool usb::host_connected() {
         return board_api_usbh::host_connected();
     }
     return false;
+}
+
+void usb::service_host_frame() {
+#if defined(CONFIG_EN_USB_HOST)
+    if (board_api_usbh::sof_timer_active()) {
+        return;
+    }
+    pio_usb_host_frame();
+#endif
 }
 
 bool usb::host_any_pad_mounted() {
