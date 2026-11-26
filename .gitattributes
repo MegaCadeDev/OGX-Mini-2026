@@ -1,0 +1,9 @@
+* text=auto
+
+# Scripts run inside the Linux devcontainer need LF regardless of the
+# checking-out OS's line-ending settings - a CRLF shebang breaks bash.
+*.sh text eol=lf
+Dockerfile text eol=lf
+
+# git apply rejects a CRLF patch whose blank context lines hold only "\r".
+*.diff text eol=lf
