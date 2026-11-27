@@ -25,7 +25,7 @@ public:
     const uint8_t* get_descriptor_device_qualifier_cb() override;
 
 private:
-    void gamepad_to_switch_report(const Gamepad::PadIn& gp_in, SwitchPro::SwitchReport& out, const Gamepad& gamepad);
+    void gamepad_to_switch_report(const Gamepad::PadIn& gp_in, SwitchPro::SwitchReport& out);
     void build_standard_report(const SwitchPro::SwitchReport& sw);
     void build_subcommand_reply(const SwitchPro::SwitchReport& sw);
     void set_timer();
