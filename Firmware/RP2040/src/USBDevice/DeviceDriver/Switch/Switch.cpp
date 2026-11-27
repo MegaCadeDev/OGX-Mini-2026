@@ -65,7 +65,7 @@ void SwitchDevice::set_timer()
 	timestamp_ms_ = now;
 }
 
-void SwitchDevice::gamepad_to_switch_report(const Gamepad::PadIn& gp_in, SwitchPro::SwitchReport& out, const Gamepad& gamepad)
+void SwitchDevice::gamepad_to_switch_report(const Gamepad::PadIn& gp_in, SwitchPro::SwitchReport& out)
 {
 	out.batteryConnection = 0x81;
 	out.buttons[0] = 0;
@@ -79,23 +79,24 @@ void SwitchDevice::gamepad_to_switch_report(const Gamepad::PadIn& gp_in, SwitchP
 	if (gp_in.buttons & Gamepad::BUTTON_B) out.buttons[0] |= SwitchPro::Btn::A;
 	if (gp_in.buttons & Gamepad::BUTTON_X) out.buttons[0] |= SwitchPro::Btn::Y;
 	if (gp_in.buttons & Gamepad::BUTTON_Y) out.buttons[0] |= SwitchPro::Btn::X;
-	if (gp_in.buttons & gamepad.MAP_BUTTON_RB) out.buttons[0] |= SwitchPro::Btn::R;
+	if (gp_in.buttons & Gamepad::BUTTON_RB) out.buttons[0] |= SwitchPro::Btn::R;
 	if (gp_in.trigger_r)                       out.buttons[0] |= SwitchPro::Btn::ZR;
 
-	if (gp_in.buttons & gamepad.MAP_BUTTON_BACK)  out.buttons[1] |= SwitchPro::Btn::MINUS;
-	if (gp_in.buttons & gamepad.MAP_BUTTON_START) out.buttons[1] |= SwitchPro::Btn::PLUS;
-	if (gp_in.buttons & gamepad.MAP_BUTTON_L3)    out.buttons[1] |= SwitchPro::Btn::L3;
-	if (gp_in.buttons & gamepad.MAP_BUTTON_R3)    out.buttons[1] |= SwitchPro::Btn::R3;
-	if (gp_in.buttons & gamepad.MAP_BUTTON_SYS)   out.buttons[1] |= SwitchPro::Btn::HOME;
-	if (gp_in.buttons & gamepad.MAP_BUTTON_MISC)  out.buttons[1] |= SwitchPro::Btn::CAPTURE;
+	/* gp_in is already mapped by the host driver (profile applied there): read the fixed bits. */
+	if (gp_in.buttons & Gamepad::BUTTON_BACK)  out.buttons[1] |= SwitchPro::Btn::MINUS;
+	if (gp_in.buttons & Gamepad::BUTTON_START) out.buttons[1] |= SwitchPro::Btn::PLUS;
+	if (gp_in.buttons & Gamepad::BUTTON_L3)    out.buttons[1] |= SwitchPro::Btn::L3;
+	if (gp_in.buttons & Gamepad::BUTTON_R3)    out.buttons[1] |= SwitchPro::Btn::R3;
+	if (gp_in.buttons & Gamepad::BUTTON_SYS)   out.buttons[1] |= SwitchPro::Btn::HOME;
+	if (gp_in.buttons & Gamepad::BUTTON_MISC)  out.buttons[1] |= SwitchPro::Btn::CAPTURE;
 
 	uint8_t hat = SwitchPro::HAT_NEUTRAL;
-	if (gp_in.dpad & gamepad.MAP_DPAD_UP)         hat |= SwitchPro::HAT_UP;
-	if (gp_in.dpad & gamepad.MAP_DPAD_DOWN)       hat |= SwitchPro::HAT_DOWN;
-	if (gp_in.dpad & gamepad.MAP_DPAD_LEFT)       hat |= SwitchPro::HAT_LEFT;
-	if (gp_in.dpad & gamepad.MAP_DPAD_RIGHT)      hat |= SwitchPro::HAT_RIGHT;
+	if (gp_in.dpad & Gamepad::DPAD_UP)         hat |= SwitchPro::HAT_UP;
+	if (gp_in.dpad & Gamepad::DPAD_DOWN)       hat |= SwitchPro::HAT_DOWN;
+	if (gp_in.dpad & Gamepad::DPAD_LEFT)       hat |= SwitchPro::HAT_LEFT;
+	if (gp_in.dpad & Gamepad::DPAD_RIGHT)      hat |= SwitchPro::HAT_RIGHT;
 	out.buttons[2] = hat;
-	if (gp_in.buttons & gamepad.MAP_BUTTON_LB) out.buttons[2] |= SwitchPro::Btn::L;
+	if (gp_in.buttons & Gamepad::BUTTON_LB) out.buttons[2] |= SwitchPro::Btn::L;
 	if (gp_in.trigger_l)                      out.buttons[2] |= SwitchPro::Btn::ZL;
 
 	// Sticks: int16 -> 12-bit (0x000–0xFFF), center 0x7FF. Use same sensitivity as Switch Pro
@@ -299,7 +300,7 @@ void SwitchDevice::process(const uint8_t idx, Gamepad& gamepad)
 
 	// Always read latest state and build report so get_report_cb and IN pushes both see current state (minimal latency).
 	Gamepad::PadIn gp_in = gamepad.get_pad_in();
-	gamepad_to_switch_report(gp_in, switch_report_, gamepad);
+	gamepad_to_switch_report(gp_in, switch_report_);
 	imu_valid_ = switch_imu::to_switch_sample(gp_in, imu_sample_);
 
 	bool is_subcommand = has_pending_output_;

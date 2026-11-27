@@ -103,7 +103,7 @@ void SteamDevice::process(const uint8_t idx, Gamepad& gamepad)
 
 	if (!SteamPassthrough::input_has_touchpad) {
 		PS5::InReport rep{};
-		SteamBtReport::fill_report_from_pad(rep, gp_in, gamepad);
+		SteamBtReport::fill_report_from_pad(rep, gp_in);
 		std::memcpy(report_in_.data(), &rep, sizeof(rep));
 		if (report_in_.size() > sizeof(rep)) {
 			std::memset(report_in_.data() + sizeof(rep), 0, report_in_.size() - sizeof(rep));
